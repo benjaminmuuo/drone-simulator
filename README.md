@@ -1,0 +1,264 @@
+# BIRDS Flight Lab: CoDrone EDU simulator
+
+A browser-based simulator for junior secondary students programming **CoDrone EDU** drones.
+Students build a flight program with Robolink-style blocks, right in the app, or import one
+exported from [Robolink Blockly](https://codrone.robolink.com/edu/blockly/). They press **Run**
+to watch the expected flight through a 3D course that matches the one laid out in class, before
+flying the real drone.
+
+> It does not talk to a physical drone. It shows the *expected* movement of a program. Wind,
+> battery, sensors and real physics are not modelled.
+
+The flight is shown in 3D, which needs a browser with WebGL. Without WebGL, the page explains the
+problem, and the editor, flight plan, telemetry and mission result still work.
+
+## Block editor
+
+The editor (`src/components/BlocklyEditor.tsx`) is [Google Blockly](https://developers.google.com/blockly),
+the engine Robolink Blockly is built on. The five supported blocks (`src/blocks/robolinkBlocks.ts`)
+use **exactly** Robolink's block types, field names and number "shadow" types, so:
+
+- **Import:** a Robolink `.xml` file opens in the editor and can be changed there. You can drop it
+  on the editor or use the Import button.
+- **Download:** saves the program as Robolink XML, ready to open in Robolink Blockly and fly.
+- **Checking:** every edit is turned into XML and checked by the same parser as an imported file.
+  The flight plan, problem list and Run button update live. **Show block** jumps to the block a
+  problem refers to.
+- **During a run:** the block being flown gets a yellow outline. If the flight fails, the failing
+  block gets a warning badge.
+- **Saving:** the program is kept in the browser (`localStorage`), so a reload does not lose
+  work. **New** starts from *take off → land*. **Example** loads the reference U-turn program.
+
+The palette is a slim category rail: Flight (take off, hover, land), Move (go forward /
+backward / left / right) and Turn. Clicking a category slides out its blocks, and the drawer
+closes once a block is dragged out, so the full width stays free for building. On narrow screens
+the rail runs along the top.
+
+Dragging is tuned to feel steady:
+
+- No grid snapping, so blocks glide instead of jumping in steps.
+- A wider connection snap radius (48–64 px) makes stacking forgiving.
+- A strong preference for the current connection stops blocks flickering between two nearby
+  spots.
+- The program is only re-checked after a block is dropped, never halfway through a drag. Blockly's icons and
+cursors are served from `public/blockly-media/` rather than Blockly's CDN, so the editor works
+offline. `src/tests/blocks.test.ts` checks that a real Robolink export loads into Blockly and saves
+back to the same program with the same block IDs.
+
+## Running it
+
+Requires Node.js 20+.
+
+```bash
+npm install
+npm run dev        # http://localhost:5173
+npm test           # Vitest unit + integration tests
+npm run typecheck  # strict TypeScript
+npm run build      # typecheck + production build into dist/
+npm run preview    # serve the production build
+```
+
+No backend is needed; `dist/` is a static site.
+
+## How a program flows through the app
+
+```
+blocks / .xml file ─► RobolinkXmlParser ─► CommandMapper ─► DroneCommand[] ─► SimulationEngine ─► SimulationResult
+              (DOM, limits)        (validation)     (preview list)    (authoritative)        │
+                                                                                            ▼
+                                    Maze3DViewport / Telemetry ◄── useSimulation ◄── animation/timeline
+```
+
+1. **Parse** (`src/parser/`). `RobolinkXmlParser` reads the file with the browser `DOMParser`, matching
+   elements by local name in the Blockly namespace. It does not use regular expressions on the XML,
+   and nothing in the file is ever executed. It walks the `<next>` chain and collects raw blocks.
+   `CommandMapper` turns each block into a typed `DroneCommand`, keeping the Blockly block `id`.
+2. **Simulate** (`src/engine/`). `SimulationEngine` applies the commands to an authoritative
+   `DroneState`, with swept collision checks, and stops at the first failure. It is pure TypeScript
+   and deterministic, with no React code.
+3. **Animate** (`src/animation/timeline.ts`, `src/hooks/useSimulation.ts`). The finished result is
+   turned into a timeline of poses, and playback only moves a clock through that timeline. Animation
+   can never change an outcome.
+
+## 3D view
+
+`src/three/` renders the mission with [three.js](https://threejs.org). The code is loaded lazily,
+so the rest of the page appears quickly, and a message is shown if WebGL is unavailable or fails to
+start.
+
+- **Scenes:** pick *Classroom* (the default) or *Forest*.
+  - **Classroom:** a room built around the arena, with 30 cm vinyl floor tiles, painted walls,
+    sunny windows, a whiteboard, a door, a clock, ceiling light panels, and desks pushed back
+    against the walls. The course is laid out the way a class would build it. Obstacles are
+    stacks of cardboard boxes at their real measured size (about 40 cm per box). The arena edge,
+    landing pad, start mark and red zones are floor tape. Traffic cones mark the arena corners,
+    the corners of the red zones and the checkpoints. A "0,0" label marks the corner that all
+    measurements start from.
+  - **Forest:** the outdoor field from before, with sky, clouds, trees, a netted cage, crates and
+    concrete walls.
+  - Every texture is drawn in code, so there are no image assets.
+- **The drone:** a quadcopter about the size of a CoDrone EDU, with prop guards, spinning
+  propellers and motion-blur discs. A red LED and nose marks the front; a green LED marks the
+  back.
+- **Realistic motion (visual only):** the drone climbs to the chosen flight height on takeoff. Moves ease in
+  and out (smootherstep). The drone tilts into its acceleration, nose-down when speeding up,
+  nose-up when braking, and it rolls when strafing. It bobs gently while hovering. Propellers spin
+  up and down. After a collision it loses lift and falls under gravity. These effects come from
+  pure functions in `src/three/motion.ts`, which read the timeline. **They never change where the
+  drone goes or whether the mission succeeds.**
+- **Run:** pressing Run puts the drone back on its start mark and glides the camera to it in
+  *Follow drone* view (leaving measuring mode if it was on). The flight starts about a second
+  later, once the camera has arrived.
+- **Camera controls:** drag sensitivity is about half the three.js default, with inertia that
+  settles quickly. The camera pad in the corner of the view, and the arrow / + / − / 0 keys when
+  the view has focus, rotate, tilt, zoom and re-centre in smooth steps. The follow camera takes
+  about 0.8 s to swing round after the drone turns, and the drone itself turns at 75°/s.
+- **Cameras:** *Overview* (drag to orbit, scroll to zoom), *Follow drone* and *Top-down*.
+  They move like a game camera. Your drags move an invisible "proxy" camera, and the real camera
+  follows it on critically damped springs (`smoothDamp` in `src/three/cameraView.ts`). That
+  gives smooth glides between modes, a slight lag behind the drone, easing round turns, a slight
+  look-ahead in the direction of travel, and a small shake on a crash. Indoors, the overview and follow
+  cameras stay inside the room. Top-down looks in through a cut-away ceiling, with the 0,0 corner
+  at the top-left, like a floor plan.
+  The follow camera rides with the drone and turns when it turns. *View from* swings it smoothly
+  to **Behind**, the **Right side**, the **Left side** or the **Front** of the drone (side views
+  show the tilt and speed best). Dragging rotates the camera freely around the drone, and the angle
+  you choose is kept as the drone turns. If the net, a box or a room wall would block the view,
+  the camera pulls in along its line of sight at once and eases back out once the way is clear,
+  like a game "spring arm". Cones, posts and flag poles directly in front of the drone fade out.
+- **Measuring tool:** pressing **Measure** switches to a top-down floor plan (drag to pan, scroll
+  to zoom towards the pointer) and returns to the previous camera afterwards.
+  - Every snappable point (arena, box and pad corners, pad centres, the start mark, red-zone
+    corners and cones) is shown as a dot.
+  - Points snap from up to 18 px away on screen, so they are equally easy to hit at any zoom.
+    Anywhere else, points round to whole centimetres.
+  - After the first click, a rubber-band tape follows the pointer with a live distance. Dashed
+    legs show the across (x) and along (y) parts.
+  - The readout under the view gives the distance from the 0,0 corner, so students can lay the
+    course out with a tape measure. **Clear** or Esc starts again.
+  - The maths is in `src/three/measure.ts`.
+- **Performance:** if frames stay slow (under about 22 fps), the render resolution drops step by
+  step, down to half. Leaving the 3D view releases its GPU context.
+
+### Flight height and real block heights
+
+Phase 1 has no altitude commands, so after takeoff the drone holds one height. Robolink does not
+publish a fixed takeoff height, so the **Flight height** setting (40–150 cm, default 80 cm) should
+be set to what your drones actually do. Measure it once with a tape measure.
+
+- A box **taller than flight height − 10 cm** blocks the drone. The 10 cm covers the drone's body
+  and its hover wobble (`OBSTACLE_CLEARANCE_CM`). Lower boxes are flown over. For example, at
+  80 cm the drone clears a single 40 cm box but hits an 80 cm stack.
+- The drone can never **land** on top of a box, whatever its height.
+- Red no-fly zones count at every height.
+
+The real CoDrone EDU holds its height above whatever surface is **below** it, using a downward
+range sensor, so it rises over a box. The simulator keeps the height above the floor instead. In
+the classroom, keep boxes well below the flight height or well above it, rather than close to it.
+
+Random wind or drift is intentionally **not** simulated. With it, a correct program could fail at
+random, which would hide the programming lesson. A seeded "real-world wobble" mode could be added
+later to show why real flights differ from the plan.
+
+## Supported Blockly blocks (Phase 1)
+
+These were confirmed from a real Robolink export (`src/tests/fixtures/main.xml`):
+
+| Block type               | Fields / inputs                                                | Command                 |
+| ------------------------ | -------------------------------------------------------------- | ----------------------- |
+| `takeoff`                | —                                                              | `TAKEOFF`               |
+| `land`                   | —                                                              | `LAND`                  |
+| `hover`                  | `NUM0` (seconds, 0–300)                                        | `HOVER`                 |
+| `go_distance`            | `TYPE` = `Direction.FORWARD/BACKWARD/LEFT/RIGHT`, `UNIT` = `cm`, `NUM0` (0–10000) | `MOVE` |
+| `turn_direction_degrees` | `TYPE` = `Direction.LEFT/RIGHT`, `NUM0` (0–360)                | `TURN`                  |
+
+Numeric inputs are read from the `<shadow>` default unless a real `<block>` is connected, in which
+case the connected block wins. Connected blocks must be plain number literals
+(`math_number`, `only_positive_decimal`, `only_positive_decimal_50`, `limit_0_To_360`). Anything
+else, such as arithmetic or variables, is reported as an **unsupported expression**. The parser
+never quietly falls back to the shadow value.
+
+The parser rejects, and reports with the block ID: malformed XML, DOCTYPEs, unsupported blocks,
+disabled blocks, loops, other nested statements and mutations, variables, missing fields, invalid
+or out-of-range numbers, unknown units or directions, and multiple loose block stacks. Limits:
+256 KB file size, 5,000 XML elements, 500 program blocks.
+
+A program in the wrong order (moving before takeoff, never landing, taking off twice) still
+imports, but with **warnings**, so students can watch where it fails.
+
+## Simulation rules
+
+- Units are centimetres. The origin is at the top-left, +x is right and +y is down.
+  Heading 0° is up and 90° is right; turning right increases the heading.
+- Moves are relative to the drone's heading. Left and right moves strafe sideways without turning.
+- The drone is a circle (`droneRadiusCm`). Obstacles and no-fly zones are axis-aligned rectangles.
+  A move is rejected if the circle overlaps any of them **at any point along the path**. This is
+  an exact segment-to-rectangle distance test, so the drone cannot tunnel through a thin wall.
+  Touching an edge exactly is allowed.
+- The circle must stay fully inside the arena.
+- A rejected command leaves the previous state untouched and ends the run. The failure records the
+  command index, the Blockly block ID, the hazard ID, and the contact point, which is used only for
+  drawing.
+- The mission succeeds when every command runs, the drone ends **landed**, its centre is inside
+  the landing zone, and every checkpoint was passed within its radius.
+
+## Adding a maze
+
+1. Create `src/mazes/my-maze.ts` that exports a `MazeDefinition` (see `src/mazes/types.ts`).
+   Measure the real course and use the same numbers: positions are from the 0,0 corner, and each
+   obstacle's `heightCm` is its real height (default 120 cm). In the classroom scene, obstacles
+   are drawn as stacks of 40 cm cardboard boxes. In the forest, narrow ones are concrete walls
+   and square ones are wooden crates.
+2. Add it to the `MAZES` array in `src/mazes/index.ts`. It appears in the maze picker automatically.
+3. Run `npm test`. The suite runs `validateMaze` on every registered maze. This catches a start
+   inside an obstacle, shapes outside the arena, duplicate IDs, checkpoints inside walls, and
+   similar mistakes.
+
+## Adding a Blockly block
+
+1. Export a real program that uses the block from Robolink Blockly and add it under
+   `src/tests/fixtures/`. Don't guess the XML.
+2. Add a variant to `DroneCommand` in `src/parser/types.ts` if needed.
+3. Add a `BlockSpec` entry in `src/parser/CommandMapper.ts` that lists the allowed fields and value
+   inputs and how to map them.
+4. Handle the command in `SimulationEngine.execute`, `buildTimeline` and `describeCommand`.
+   TypeScript's exhaustive `switch` statements will point out the places you miss.
+5. Add parser and simulation tests.
+
+Loops, conditions, variables, sensors and functions are deliberately unsupported until
+representative exported XML is available.
+
+## Project layout
+
+```
+src/
+├── app/App.tsx                 page composition and import state
+├── blocks/                     Robolink block definitions, palette, Blockly theme
+├── components/                 BlocklyEditor, ProgramPanel, FlightPlan, Maze3DViewport, FlightHud,
+│                               TransportBar, MissionFeedback, Icon
+├── parser/                     RobolinkXmlParser, CommandMapper, SequenceValidator, describeCommand, types
+├── engine/                     SimulationEngine, MovementEngine, CollisionDetector, types
+├── animation/timeline.ts       result → poses over time (visual only)
+├── three/                      3D world: createDroneWorld (render loop, camera rig, measuring),
+│                               scenery (classroom / forest environment), mazeObjects (props),
+│                               droneModel, textures, motion, cameraView, measure, coords
+├── hooks/useSimulation.ts      playback clock: run, pause, resume, reset, speed
+├── mazes/                      maze data, registry and validateMaze
+└── tests/                      Vitest suites + fixtures/main.xml
+```
+
+## Assumptions not verifiable from the single sample
+
+- `Direction.BACKWARD`, `Direction.LEFT` and `Direction.RIGHT` for `go_distance`, and
+  `Direction.LEFT` for turns, follow the naming pattern of the confirmed values.
+- Only the `cm` unit is accepted. Other units Blockly may offer are rejected with a clear message
+  until an export confirms their exact field values. To add one, extend `UNIT_TO_CM` in
+  `CommandMapper.ts`.
+- When a real block is plugged into an input, Blockly writes `<shadow>` and `<block>` side by side
+  inside `<value>`. This is standard Blockly behaviour, but the sample only contains shadows.
+- Robolink programs appear to be one top-level stack with no "start" hat block, as in the sample.
+  Workspaces with several loose stacks are rejected as ambiguous.
+- The landing check uses the drone's centre point, and no-fly zones are checked against the drone's
+  full body.
+- Playback speeds (40 cm/s, 75°/s turns, 1.2 s takeoff and landing) are only for display. They are not
+  real CoDrone performance figures.
