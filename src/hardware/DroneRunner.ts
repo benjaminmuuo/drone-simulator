@@ -81,6 +81,7 @@ const TURN_GAIN = 10;
  * The runner learns this as it flies and aims each turn short by its current estimate.
  */
 const INITIAL_OVERSHOOT_DEG = 4;
+export const DEFAULT_CALIBRATION: Calibration = { overshootDeg: INITIAL_OVERSHOOT_DEG, moveRatio: 1 };
 const MAX_OVERSHOOT_DEG = 10;
 /**
  * Turns outside this overshoot range (e.g. 111° for 90°, after a radio gap) say nothing about
@@ -116,13 +117,37 @@ export type RunOutcome =
   | { readonly status: 'STOPPED' }
   | { readonly status: 'FAILED'; readonly message: string; readonly commandIndex: number | null };
 
+/** What the runner has learned about this drone; saved between sessions (see calibrationStore). */
+export interface Calibration {
+  /** How far turns end past their target (°). */
+  readonly overshootDeg: number;
+  /** Distance travelled / distance sent. */
+  readonly moveRatio: number;
+}
+
+/** One measurement from a real flight, for calibration reports. */
+export type Measurement =
+  | { readonly kind: 'move'; readonly askedCm: number; readonly sentCm: number; readonly movedCm: number; readonly offDeg: number | null }
+  | { readonly kind: 'turn'; readonly askedDeg: number; readonly turnedDeg: number; readonly courseErrorDeg: number }
+  /**
+   * Where the drone ended, compared with where the program says it should be, just before landing.
+   * In the take-off frame: forward + / back −, left + / right −.
+   */
+  | { readonly kind: 'end'; readonly offCm: number; readonly forwardCm: number; readonly leftCm: number };
+
 export interface RunEvents {
   /** A command starts (index into the list). */
   onStep?(index: number, command: DroneCommand): void;
   onLog?(message: string): void;
+  onMeasure?(measurement: Measurement): void;
 }
 
 class Cancelled extends Error {}
+
+interface Report {
+  log(message: string): void;
+  measure(measurement: Measurement): void;
+}
 
 /** How far a move really went, and how far its direction was from the intended one (left +). */
 interface MoveReport {
@@ -157,9 +182,9 @@ export class DroneRunner {
   /** Both work on hardware; the drone's own heading control doesn't depend on a fast radio loop. */
   turnMethod: TurnMethod = 'drone-heading';
   /** Learned turn overshoot (°). Kept across flights while connected. */
-  overshootDeg = INITIAL_OVERSHOOT_DEG;
+  overshootDeg: number;
   /** Learned distance travelled / distance sent. Kept across flights while connected. */
-  moveRatio = 1;
+  moveRatio: number;
   /** When the battery reading first dropped below landBattery (null while above). */
   private lowBatterySince: number | null = null;
   /**
@@ -167,8 +192,18 @@ export class DroneRunner {
    * Each turn corrects it, so small turn errors don't add up over a program.
    */
   private courseError = 0;
+  /**
+   * Where the program says the drone should be (cm, in the drone's position frame) and which way it
+   * should face, from take-off on. Null when the position couldn't be read at take-off.
+   */
+  private plan: { x: number; y: number; headingDeg: number } | null = null;
 
-  constructor(private readonly link: DroneLink) {
+  constructor(
+    private readonly link: DroneLink,
+    calibration: Calibration = DEFAULT_CALIBRATION,
+  ) {
+    this.overshootDeg = calibration.overshootDeg;
+    this.moveRatio = calibration.moveRatio;
     this.unsubscribe = link.onPacket((p) => this.handle(p));
     this.pollTimer = setInterval(() => {
       if (!this.pollPaused) void this.link.send(requestStatePacket()).catch(() => {});
@@ -178,6 +213,10 @@ export class DroneRunner {
 
   get isRunning() {
     return this.running;
+  }
+
+  get calibration(): Calibration {
+    return { overshootDeg: this.overshootDeg, moveRatio: this.moveRatio };
   }
 
   /** True when the drone has reported its state and replied recently. */
@@ -220,13 +259,14 @@ export class DroneRunner {
     this.running = true;
     this.cancel = null;
     const log = (m: string) => events.onLog?.(m);
+    const report: Report = { log, measure: (m) => events.onMeasure?.(m) };
     let index: number | null = null;
     try {
       await this.setup();
       for (const [i, command] of commands.entries()) {
         index = i;
         events.onStep?.(i, command);
-        await this.execute(command, log);
+        await this.execute(command, report);
       }
       return { status: 'COMPLETED' };
     } catch (e) {
@@ -261,12 +301,13 @@ export class DroneRunner {
 
   /* ---------- commands ---------- */
 
-  private async execute(command: DroneCommand, log: (m: string) => void) {
+  private async execute(command: DroneCommand, { log, measure }: Report) {
     switch (command.type) {
       case 'TAKEOFF':
         log('→ take off');
         return this.takeOff();
       case 'LAND':
+        await this.measureEnd({ log, measure });
         log('→ land');
         return this.land(false);
       case 'HOVER':
@@ -285,6 +326,7 @@ export class DroneRunner {
           RIGHT: [0, -m],
         };
         const [x, y] = axes[command.direction];
+        this.planMove(command.direction, command.distanceCm);
         const moved = await this.move(x, y, m, log);
         if (moved) {
           const short = moved.cm < command.distanceCm * SHORT_MOVE_RATIO;
@@ -292,12 +334,14 @@ export class DroneRunner {
           const sent = Math.round(sentCm) === command.distanceCm ? '' : `, sent ${Math.round(sentCm)} cm`;
           log(`${short ? '⚠ ' : ''}moved ${Math.round(moved.cm)} cm (asked ${command.distanceCm} cm${sent})${off}`);
           this.learnMoveRatio(moved, sentCm, log);
+          measure({ kind: 'move', askedCm: command.distanceCm, sentCm, movedCm: moved.cm, offDeg: moved.offDeg });
         }
         return;
       }
       case 'TURN': {
         log(`→ turn ${command.direction.toLowerCase()} ${command.degrees}°`);
         const degrees = command.direction === 'LEFT' ? command.degrees : -command.degrees;
+        if (this.plan) this.plan = { ...this.plan, headingDeg: this.plan.headingDeg + degrees };
         // Aim at the heading the program expects, not just "degrees from here"...
         const target = Math.max(-360, Math.min(360, degrees - this.courseError));
         // ...and stop short by the overshoot learned so far.
@@ -325,6 +369,7 @@ export class DroneRunner {
           `turned ${Math.round(Math.abs(turned))}°${wrongWay ? ' the wrong way' : ''} (asked ${command.degrees}°), ` +
             (off === 0 ? 'on course' : `${off}° ${this.courseError > 0 ? 'left' : 'right'} of course`),
         );
+        measure({ kind: 'turn', askedDeg: command.degrees, turnedDeg: Math.abs(turned), courseErrorDeg: this.courseError });
         return;
       }
     }
@@ -351,10 +396,51 @@ export class DroneRunner {
 
   private async takeOff() {
     this.courseError = 0;
+    this.plan = null;
     await this.hold();
     if (!(await this.sendUntil(takeOffPacket, ['TakeOff', 'Flight'], 4000))) throw new FlightError('The drone did not take off.');
     if (!(await this.waitForFlight(['Flight'], 8000))) throw new FlightError('The drone did not finish climbing.');
     await this.wait(1000);
+    // Where the program starts from: the drone's position and heading once it has climbed.
+    this.pollPaused = true;
+    try {
+      const at = await this.freshPosition();
+      const heading = await this.tryYaw(HEADING_TIMEOUT_MS);
+      if (at && heading !== null) this.plan = { x: at.x * 100, y: at.y * 100, headingDeg: heading };
+    } finally {
+      this.pollPaused = false;
+    }
+  }
+
+  /** Moves the planned position by a move as the program asks for it (not as sent or flown). */
+  private planMove(direction: 'FORWARD' | 'BACKWARD' | 'LEFT' | 'RIGHT', cm: number) {
+    if (!this.plan) return;
+    const body: Record<typeof direction, readonly [number, number]> = { FORWARD: [cm, 0], BACKWARD: [-cm, 0], LEFT: [0, cm], RIGHT: [0, -cm] };
+    const [bx, by] = body[direction];
+    const r = (this.plan.headingDeg * Math.PI) / 180;
+    this.plan = { ...this.plan, x: this.plan.x + bx * Math.cos(r) - by * Math.sin(r), y: this.plan.y + bx * Math.sin(r) + by * Math.cos(r) };
+  }
+
+  /** Before landing: how far is the drone from where the program says it should be? */
+  private async measureEnd({ log, measure }: Report) {
+    if (!this.plan) return;
+    this.pollPaused = true;
+    let at: { x: number; y: number } | null;
+    try {
+      at = await this.freshPosition();
+    } finally {
+      this.pollPaused = false;
+    }
+    if (!at) return;
+    const forwardCm = at.x * 100 - this.plan.x;
+    const leftCm = at.y * 100 - this.plan.y;
+    const offCm = Math.hypot(forwardCm, leftCm);
+    const part = (v: number, plus: string, minus: string) => `${Math.round(Math.abs(v))} cm ${v >= 0 ? plus : minus}`;
+    log(
+      `end point: ${Math.round(offCm)} cm from where the program says ` +
+        `(${part(forwardCm, 'further forward', 'further back')}, ${part(leftCm, 'left', 'right')}, as seen from take-off)`,
+    );
+    measure({ kind: 'end', offCm, forwardCm, leftCm });
   }
 
   /** `force`: also used to stop a flight, so it ignores cancellation. */

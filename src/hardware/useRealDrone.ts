@@ -3,6 +3,7 @@ import type { DroneCommand } from '../parser/types';
 import { DroneRunner } from './DroneRunner';
 import type { RunOutcome } from './DroneRunner';
 import { SerialLink, isWebSerialSupported } from './SerialLink';
+import { loadCalibration, saveCalibration } from './calibrationStore';
 import type { DroneStatus } from './protocol';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
@@ -77,7 +78,8 @@ export function useRealDrone(): RealDroneController {
       setConnection('disconnected');
       return;
     }
-    const r = new DroneRunner(l);
+    // Start from what earlier flights (here or on the hardware test page) learned about the drone.
+    const r = new DroneRunner(l, loadCalibration());
     link.current = l;
     runner.current = r;
     r.onStatus((s) => {
@@ -107,6 +109,7 @@ export function useRealDrone(): RealDroneController {
     const outcome = await r.run(commands, {
       onStep: (activeIndex) => setFlight((f) => (f.phase === 'flying' ? { ...f, activeIndex } : f)),
     });
+    saveCalibration(r.calibration);
     setFlight({ phase: 'done', commands, outcome });
   }, []);
 

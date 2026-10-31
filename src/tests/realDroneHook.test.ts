@@ -61,6 +61,18 @@ describe('useRealDrone', () => {
     expect(link.events).toEqual(['TAKEOFF', 'LAND']);
   });
 
+  it('saves what the drone learned, and starts the next connection from it', async () => {
+    window.localStorage.setItem('birds.droneCalibration.v1', JSON.stringify({ overshootDeg: 6, moveRatio: 0.9 }));
+    const { result } = await connected();
+    act(() => result.current.fly([{ type: 'TAKEOFF', blockId: null }, { type: 'MOVE', direction: 'FORWARD', distanceCm: 45, blockId: null }, { type: 'LAND', blockId: null }]));
+    await advance(15_000);
+    expect(link.events).toContain('MOVE 0.50,0.00');
+    const saved = JSON.parse(window.localStorage.getItem('birds.droneCalibration.v1')!);
+    expect(saved.overshootDeg).toBe(6);
+    // The fake drone flies exactly what it's sent, so the ratio moves from 0.9 towards 1.
+    expect(saved.moveRatio).toBeGreaterThan(0.9);
+  });
+
   it('Space cuts the motors during a flight', async () => {
     const { result } = await connected();
     act(() => result.current.fly(PROGRAM));

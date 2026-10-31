@@ -122,7 +122,17 @@ more, up to +30% (for example, it sends 53 cm for a 50 cm block). It learns from
 more, ignores outliers, and keeps the estimate between flights while connected. The fake drone in
 `src/tests/fakeDrone.ts` behaves the same way.
 
-**Hardware test page.** `npm run dev`, then open `/spike/hardware.html`. It flies small test
+**Calibration.** What the runner learns (turn overshoot and distance ratio) is saved in the
+browser, so it survives reconnecting and reloading, and the app and the hardware test page share it.
+It's saved per browser, not per drone: use **Reset calibration** on the test page when you switch
+drones. Before each landing, the runner also measures how far the drone is from where the program
+says it should be (the **end point**). That's the overall accuracy number for a flight.
+
+**Hardware test page.** `npm run dev`, then open `/spike/hardware.html`. **Flight School calibration**
+has a button for each lesson. Fly each one several times, putting the drone back on the start mark
+in between. The **Results** table summarises every flight: moves (distance flown vs asked), turn
+error, how far off course the turns left the drone, and the end point. **Copy results** copies a
+compact text summary; results are kept in the browser until **Clear results**. It flies small test
 programs (single moves, single turns, a U-turn with a 40 cm sideways step) or pasted Blockly XML, and shows raw
 state and packet logs. It is not part of the production build.
 

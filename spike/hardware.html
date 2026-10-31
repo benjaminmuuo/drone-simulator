@@ -8,7 +8,12 @@
       :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
       body { max-width: 760px; margin: 24px auto; padding: 0 16px; background: Canvas; color: CanvasText; }
       .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; align-items: center; }
-      #programs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+      .hint { color: GrayText; margin: 4px 0 10px; }
+      table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; margin: 8px 0; }
+      th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #8884; }
+      th { font-weight: 600; }
+      .good { color: #1a7f37; } .fair { color: #b26a00; } .poor { color: #c62828; }
       button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #8886; cursor: pointer; text-align: left; }
       button:disabled { opacity: 0.45; cursor: not-allowed; }
       #abort { background: #f57c00; color: #fff; border: none; font-weight: 600; padding: 14px 20px; }
@@ -42,11 +47,28 @@
       <span>Rejected packets</span><b id="s-rejected">–</b>
     </div>
 
-    <h2>Test programs (top to bottom)</h2>
+    <h2>Flight School calibration</h2>
+    <p class="hint">
+      Put the drone on the lesson's start mark facing forward, fly a lesson, then put it back on the start mark. Fly each lesson
+      several times. The drone learns its turn overshoot and distance as it goes; the table shows how close it gets.
+    </p>
     <p class="row">
       <label><input type="checkbox" id="heading-turns" checked autocomplete="off" /> Turn with the drone's own heading control (untick for the yaw-stick loop)</label>
     </p>
-    <div id="programs"></div>
+    <div id="lessons" class="grid"></div>
+
+    <h2>Results</h2>
+    <p class="row">
+      <span id="calibration"></span>
+      <button id="copy-results">Copy results</button>
+      <button id="clear-results">Clear results</button>
+      <button id="reset-calibration">Reset calibration</button>
+    </p>
+    <div id="results"><p class="hint">No flights yet.</p></div>
+    <textarea id="results-text" hidden readonly></textarea>
+
+    <h2>Other test programs</h2>
+    <div id="programs" class="grid"></div>
 
     <h2>Or paste Robolink Blockly XML</h2>
     <textarea id="xml" placeholder="&lt;xml xmlns=&quot;https://developers.google.com/blockly/xml&quot;&gt;…"></textarea>

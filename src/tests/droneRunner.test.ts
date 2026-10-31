@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DroneRunner, RUNNER_LIMITS } from '../hardware/DroneRunner';
+import type { Measurement } from '../hardware/DroneRunner';
 import { parseRobolinkXml } from '../parser/RobolinkXmlParser';
 import type { DroneCommand } from '../parser/types';
 import { FLIGHT, FakeDrone } from './fakeDrone';
@@ -157,6 +158,41 @@ describe('DroneRunner', () => {
     await settle(runner.run([cmd.takeoff, cmd.forward(50), cmd.land], { onLog: (m) => log.push(m) }));
     expect(log).toContain('(unusual move: not used to learn the distance)');
     expect(runner.moveRatio).toBe(1);
+  });
+
+  it('reports every move, turn and where the flight ended as measurements', async () => {
+    // Turns overshoot by exactly the 4° the runner starts out expecting, so every move and turn is on target.
+    drone.overshootDeg = 4;
+    const measurements: Measurement[] = [];
+    await settle(runner.run(parse(UTURN_XML), { onMeasure: (m) => measurements.push(m) }));
+    expect(measurements.map((m) => m.kind)).toEqual(['move', 'turn', 'move', 'turn', 'move', 'end']);
+    expect(measurements[0]).toMatchObject({ kind: 'move', askedCm: 50 });
+    expect(measurements[1]).toMatchObject({ kind: 'turn', askedDeg: 90 });
+    // So it ends where the program says.
+    expect(measurements.at(-1)).toMatchObject({ kind: 'end' });
+    expect((measurements.at(-1) as Extract<Measurement, { kind: 'end' }>).offCm).toBeLessThan(2);
+  });
+
+  it('measures how far the end point is from the plan, and in which direction', async () => {
+    // The drone flies 80 % of each move: forward 50 ends 10 cm short.
+    drone.travelRatio = 0.8;
+    const measurements: Measurement[] = [];
+    const log: string[] = [];
+    await settle(runner.run([cmd.takeoff, cmd.forward(50), cmd.land], { onMeasure: (m) => measurements.push(m), onLog: (m) => log.push(m) }));
+    const end = measurements.find((m) => m.kind === 'end') as Extract<Measurement, { kind: 'end' }>;
+    expect(end.forwardCm).toBeCloseTo(-10, 0);
+    expect(Math.abs(end.leftCm)).toBeLessThan(1);
+    expect(log).toContainEqual(expect.stringMatching(/^end point: 10 cm from where the program says \(10 cm further back/));
+  });
+
+  it('starts from a saved calibration and reports what it has learned', async () => {
+    runner.dispose();
+    runner = new DroneRunner(drone, { overshootDeg: 6, moveRatio: 0.9 });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(runner.calibration).toEqual({ overshootDeg: 6, moveRatio: 0.9 });
+    await settle(runner.run([cmd.takeoff, cmd.forward(45), cmd.land]));
+    // 45 cm / 0.9 = 50 cm sent.
+    expect(drone.events).toContain('MOVE 0.50,0.00');
   });
 
   it('does not learn from an unusual turn', async () => {
