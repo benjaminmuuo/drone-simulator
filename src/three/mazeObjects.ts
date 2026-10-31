@@ -25,6 +25,7 @@ import {
   TorusGeometry,
 } from 'three';
 import type { Material, Object3D, Texture, Vector3 } from 'three';
+import { ARENA_CONE_INSET_CM } from '../mazes/cones';
 import { DEFAULT_FLIGHT_HEIGHT_CM, DEFAULT_OBSTACLE_HEIGHT_CM } from '../mazes/constants';
 import type { MazeDefinition, Obstacle, Point } from '../mazes/types';
 import { arenaToWorld, seededRandom } from './coords';
@@ -132,7 +133,7 @@ export function createMazeObjects(maze: MazeDefinition, theme: ThemeId): MazeObj
   };
 
   if (classroom) {
-    const inset = 6;
+    const inset = ARENA_CONE_INSET_CM;
     for (const [x, y] of [
       [inset, inset],
       [maze.widthCm - inset, inset],

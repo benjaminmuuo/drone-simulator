@@ -3,6 +3,7 @@ import { STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
 import { simulate } from '../engine/SimulationEngine';
 import { COURSE_GROUPS, DEFAULT_MAZE, MAZES } from '../mazes';
 import { DEFAULT_FLIGHT_HEIGHT_CM, OBSTACLE_CLEARANCE_CM } from '../mazes/constants';
+import { coneBase, conesOf } from '../mazes/cones';
 import { MIN_PATH_CLEARANCE_CM, PAD_CM } from '../mazes/courseRules';
 import type { MazeDefinition, Point, Rect } from '../mazes/types';
 import { validateMaze } from '../mazes/validateMaze';
@@ -76,6 +77,15 @@ describe.each(MAZES.map((m) => [m.name, m] as const))('%s', (_name, maze) => {
 describe.each(goalCourses.map((m) => [m.name, m] as const))('%s (goal)', (_name, maze) => {
   it('has a 50 × 50 cm landing pad', () => {
     expect([maze.landingZone.width, maze.landingZone.height]).toEqual([PAD_CM, PAD_CM]);
+  });
+
+  it('has no cone on its landing pad', () => {
+    for (const cone of conesOf(maze)) {
+      const base = coneBase(cone);
+      const pad = maze.landingZone;
+      const overlaps = base.x < pad.x + pad.width && pad.x < base.x + base.width && base.y < pad.y + pad.height && pad.y < base.y + base.height;
+      expect(overlaps, `${cone.label} at (${cone.x}, ${cone.y})`).toBe(false);
+    }
   });
 
   it('cannot be solved by just taking off and landing', () => {

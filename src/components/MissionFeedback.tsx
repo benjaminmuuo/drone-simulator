@@ -9,6 +9,7 @@ const TITLES: Record<FailureKind, string> = {
   ALREADY_FLYING: 'The drone is already in the air',
   NOT_LANDED: "The drone didn't land",
   LANDED_OUTSIDE_ZONE: 'Missed the landing zone',
+  LANDED_ON_CONE: 'Unsafe landing! The drone came down on a cone',
   CHECKPOINT_MISSED: 'A checkpoint was missed',
   EMPTY_PROGRAM: 'Nothing to run',
 };
@@ -21,6 +22,7 @@ const TIPS: Record<FailureKind, string> = {
   ALREADY_FLYING: 'Remove the extra "take off" block, or land first.',
   NOT_LANDED: 'Finish your program with a "land" block.',
   LANDED_OUTSIDE_ZONE: 'Adjust your moves so the drone ends over the green H pad.',
+  LANDED_ON_CONE: 'Cones are markers to fly over, not to land on. Finish your route on the green H pad.',
   CHECKPOINT_MISSED: 'Make sure your route passes over every checkpoint cone.',
   EMPTY_PROGRAM: 'Add some blocks to your program.',
 };

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { SimulationEngine, simulate } from '../engine/SimulationEngine';
 import { beginnerMaze, boxSlalom } from './fixtures/testMazes';
 import { MAZES } from '../mazes';
+import { lessonTurnRight } from '../mazes/lessons';
 import { openField } from '../mazes/open-field';
 import type { MazeDefinition } from '../mazes/types';
 import { validateMaze } from '../mazes/validateMaze';
@@ -112,6 +113,27 @@ describe('hover and rotation', () => {
   it('moves along the rotated heading', () => {
     const result = simulate([takeoff, right(90), forward(30), land], openField);
     expect(result.steps[2]?.after).toMatchObject({ x: 230, y: 150 });
+  });
+});
+
+describe('landing on cones', () => {
+  it('fails at the Land block when the drone comes down on a checkpoint cone', () => {
+    // Lesson 2: the cone is 50 cm straight ahead of the start mark.
+    const result = simulate([takeoff, forward(50), land], lessonTurnRight);
+    expect(result.failure).toMatchObject({ kind: 'LANDED_ON_CONE', commandIndex: 2, blockId: 'ld' });
+    expect(result.failure?.message).toMatch(/land on the Corner cone.*tip over or break a propeller/);
+    expect(result.failure?.contactPoint).toEqual({ x: 150, y: 200 });
+  });
+
+  it('only counts the cone itself: landing 25 cm away just misses the pad', () => {
+    expect(simulate([takeoff, forward(25), land], lessonTurnRight).failure?.kind).toBe('LANDED_OUTSIDE_ZONE');
+  });
+
+  it('includes the cones in the arena corners', () => {
+    // Open floor: start (200, 150) facing up → (200, 10) → left to (10, 10), next to the corner cone at (6, 6).
+    const result = simulate([takeoff, forward(140), left(90), forward(190), land], openField);
+    expect(result.failure).toMatchObject({ kind: 'LANDED_ON_CONE', commandIndex: 4 });
+    expect(result.failure?.message).toContain('arena corner cone');
   });
 });
 

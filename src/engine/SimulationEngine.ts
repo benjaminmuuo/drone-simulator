@@ -7,6 +7,7 @@
  */
 import { describeCommand } from '../parser/describeCommand';
 import type { DroneCommand } from '../parser/types';
+import { coneBase, conesOf } from '../mazes/cones';
 import { DEFAULT_FLIGHT_HEIGHT_CM } from '../mazes/constants';
 import type { MazeDefinition, Point } from '../mazes/types';
 import { checkPath, circleOverlapsRect, pointSegmentDistance, rectContainsPoint } from './CollisionDetector';
@@ -94,6 +95,17 @@ export class SimulationEngine {
             message: `${label}: the drone would land on top of "${box.label}".`,
             contactPoint: { x: before.x, y: before.y },
             zoneId: box.id,
+          });
+        }
+        // Cones are flown over, but coming down on one tips the drone over.
+        const cone = conesOf(this.maze).find((c) => circleOverlapsRect(before, this.maze.droneRadiusCm, coneBase(c)));
+        if (cone) {
+          return fail({
+            kind: 'LANDED_ON_CONE',
+            message:
+              `${label}: the drone would land on the ${cone.label}. ` +
+              'A cone is not a safe place to land: the drone could tip over or break a propeller.',
+            contactPoint: { x: cone.x, y: cone.y },
           });
         }
         after = { ...before, flight: 'LANDED' };

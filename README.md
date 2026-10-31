@@ -265,6 +265,9 @@ imports, but with **warnings**, so students can watch where it fails.
 - A rejected command leaves the previous state untouched and ends the run. The failure records the
   command index, the Blockly block ID, the hazard ID, and the contact point, which is used only for
   drawing.
+- Landing on top of a box, or on a cone (checkpoint cones and the arena corner cones, 18 cm bases),
+  fails at the Land block. Cones are markers to fly over, but a drone coming down on one can tip
+  over or break a propeller.
 - The mission succeeds when every command runs, the drone ends **landed**, its centre is inside
   the landing zone, and every checkpoint was passed within its radius.
 

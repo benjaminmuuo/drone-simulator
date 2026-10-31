@@ -20,6 +20,7 @@ export type FailureKind =
   | 'ALREADY_FLYING'
   | 'NOT_LANDED'
   | 'LANDED_OUTSIDE_ZONE'
+  | 'LANDED_ON_CONE'
   | 'CHECKPOINT_MISSED'
   | 'EMPTY_PROGRAM';
 
