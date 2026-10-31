@@ -114,10 +114,16 @@ export function RealDronePanel({ drone, commands, blockers, onShowBlock }: Props
         </div>
       ) : flying ? (
         <div className="real-drone__row">
-          <p className="real-drone__text" aria-live="polite">
-            {active ? `${flight.activeIndex! + 1}. ${describeCommand(active)}` : 'Starting…'}
-            <span className="real-drone__keys">Space = STOP</span>
-          </p>
+          {flight.warning ? (
+            <p className="real-drone__result real-drone__result--error real-drone__text" role="alert">
+              <Icon name="alert" /> {flight.warning}
+            </p>
+          ) : (
+            <p className="real-drone__text" aria-live="polite">
+              {active ? `${flight.activeIndex! + 1}. ${describeCommand(active)}` : 'Starting…'}
+              <span className="real-drone__keys">Space = STOP</span>
+            </p>
+          )}
           <button type="button" className="btn btn--secondary" onClick={drone.land} disabled={flight.landing}>
             <Icon name="land" /> Land now
           </button>

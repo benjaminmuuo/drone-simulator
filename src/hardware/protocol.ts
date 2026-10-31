@@ -23,6 +23,7 @@ export const DataType = {
   State: 0x40,
   Position: 0x42,
   Motion: 0x44,
+  LostConnection: 0x54,
 } as const;
 
 export const DeviceType = {
@@ -140,6 +141,19 @@ const int8 = (v: number) => Math.max(-100, Math.min(100, Math.round(v))) & 0xff;
 /** Roll, pitch, yaw, throttle, each -100..100 (yaw + = turn left). All zero = hold position. */
 export const controlPacket = (roll: number, pitch: number, yaw: number, throttle: number) =>
   encodePacket(DataType.Control, [int8(roll), int8(pitch), int8(yaw), int8(throttle)]);
+
+/**
+ * What the drone does by itself when it loses the radio link to the controller (codrone-edu's
+ * sendLostConnection): after `neutralMs` it stops moving, after `landingMs` it lands, after
+ * `stopMs` it stops its motors. Measured default on a CoDrone EDU: 600 ms / 20 s / 120 s.
+ */
+export function lostConnectionPacket(neutralMs: number, landingMs: number, stopMs: number) {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setUint16(0, neutralMs, true);
+  view.setUint16(2, landingMs, true);
+  view.setUint32(4, stopMs, true);
+  return encodePacket(DataType.LostConnection, new Uint8Array(view.buffer));
+}
 
 /**
  * Relative position move, as codrone-edu's sendControlPosition.

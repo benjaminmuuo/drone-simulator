@@ -10,7 +10,14 @@ export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
 
 export type RealFlight =
   | { readonly phase: 'idle' }
-  | { readonly phase: 'flying'; readonly commands: readonly DroneCommand[]; readonly activeIndex: number | null; readonly landing: boolean }
+  | {
+      readonly phase: 'flying';
+      readonly commands: readonly DroneCommand[];
+      readonly activeIndex: number | null;
+      readonly landing: boolean;
+      /** Shown while flying, e.g. contact lost and the drone may still be in the air. */
+      readonly warning: string | null;
+    }
   | { readonly phase: 'done'; readonly commands: readonly DroneCommand[]; readonly outcome: RunOutcome };
 
 export interface RealDroneController {
@@ -105,9 +112,10 @@ export function useRealDrone(): RealDroneController {
   const fly = useCallback(async (commands: readonly DroneCommand[]) => {
     const r = runner.current;
     if (!r || r.isRunning) return;
-    setFlight({ phase: 'flying', commands, activeIndex: null, landing: false });
+    setFlight({ phase: 'flying', commands, activeIndex: null, landing: false, warning: null });
     const outcome = await r.run(commands, {
       onStep: (activeIndex) => setFlight((f) => (f.phase === 'flying' ? { ...f, activeIndex } : f)),
+      onWarning: (warning) => setFlight((f) => (f.phase === 'flying' ? { ...f, warning } : f)),
     });
     saveCalibration(r.calibration);
     setFlight({ phase: 'done', commands, outcome });

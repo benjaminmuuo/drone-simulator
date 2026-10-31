@@ -7,6 +7,7 @@ import {
   commandPacket,
   controlPacket,
   controlPositionPacket,
+  lostConnectionPacket,
   crc16,
   landingPacket,
   parseMotionYaw,
@@ -30,6 +31,8 @@ const GOLDEN = {
   control0: '0a 55 10 04 70 10 00 00 00 00 b4 bd',
   requestMotion: '0a 55 04 01 70 10 44 89 2c',
   requestPosition: '0a 55 04 01 70 10 42 4f 4c',
+  /** Lost link: neutral 600 ms, land 3000 ms, stop 120 s; the drone read this back after it was set. */
+  lostLink: '0a 55 54 08 70 10 58 02 b8 0b c0 d4 01 00 b8 5f',
   speed2: '0a 55 11 02 70 10 04 02 37 f6',
   modePosition: '0a 55 11 02 70 10 02 11 c3 7e',
   headlessNormal: '0a 55 11 02 70 10 03 02 a0 6f',
@@ -65,6 +68,7 @@ describe('packet encoding', () => {
     ['headlessNormal', commandPacket(CommandType.Headless, HeadlessMode.Normal)],
     ['moveForward50', controlPositionPacket(0.5, 0, 0, 0.5)],
     ['moveRight30', controlPositionPacket(0, -0.3, 0, 0.5)],
+    ['lostLink', lostConnectionPacket(600, 3000, 120_000)],
   ] as const)('%s matches the golden bytes', (name, packet) => {
     expect(toHex(packet)).toBe(GOLDEN[name]);
   });

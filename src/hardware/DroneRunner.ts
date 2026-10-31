@@ -21,6 +21,7 @@ import {
   controlPacket,
   controlPositionPacket,
   landingPacket,
+  lostConnectionPacket,
   parseMotionYaw,
   parsePosition,
   parseState,
@@ -102,6 +103,14 @@ const HEADING_TIMEOUT_MS = 1200;
  * drone to confirm, instead of failing after 1.5 s without a reply.
  */
 const LAND_CONFIRM_MS = 10_000;
+/**
+ * The drone's own lost-link behaviour, sent at the start of every flight. Its default was to
+ * land only after 20 s without a link, so after a dropout it just hovered (seen on hardware).
+ * Now it stops moving after 0.6 s and lands by itself after 3 s.
+ */
+export const LOST_LINK = { neutralMs: 600, landingMs: 3000, stopMs: 120_000 } as const;
+/** After losing contact mid-flight, keep sending "land" this long, waiting for the drone to confirm. */
+const LOST_CONTACT_LAND_MS = 30_000;
 /** Before refusing to start because the drone isn't answering, wait this long for it to reply. */
 const START_CONTACT_MS = 2000;
 const TURN_READING_MS = 200;
@@ -173,6 +182,8 @@ export interface RunEvents {
   onStep?(index: number, command: DroneCommand): void;
   onLog?(message: string): void;
   onMeasure?(measurement: Measurement): void;
+  /** Something the person flying must know now (e.g. contact lost while the drone may be flying). */
+  onWarning?(message: string): void;
 }
 
 class Cancelled extends Error {}
@@ -192,6 +203,9 @@ interface MoveReport {
 }
 
 class FlightError extends Error {}
+
+/** The drone stopped answering mid-flight: it may still be in the air. */
+class LostContactError extends FlightError {}
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const wrap180 = (deg: number) => ((((deg + 180) % 360) + 360) % 360) - 180;
@@ -315,12 +329,26 @@ export class DroneRunner {
       return { status: 'COMPLETED' };
     } catch (e) {
       if (e instanceof Cancelled) return { status: this.cancel ?? 'ABORTED' };
-      const message = e instanceof Error ? e.message : String(e);
+      let message = e instanceof Error ? e.message : String(e);
       log(`✗ ${message}`);
-      if (airborne(this.status?.flight)) {
+      if (e instanceof LostContactError) {
+        // The drone may still be flying: keep telling it to land until it confirms.
+        const warning =
+          `Lost contact with the drone. It should land by itself within ${LOST_LINK.landingMs / 1000} seconds. ` +
+          'Press STOP if it does not.';
+        events.onWarning?.(warning);
+        log(`⚠ ${warning}`);
+        const landed = await this.landUntilConfirmed();
+        message = landed
+          ? 'Lost contact with the drone during the flight. It has landed.'
+          : 'Lost contact with the drone, and it never confirmed landing. Check that it is down before flying again.';
+        log(landed ? '→ the drone has landed' : '✗ landing not confirmed');
+      } else if (airborne(this.status?.flight)) {
         log('→ landing for safety');
         await this.land(true).catch(() => {});
       }
+      // STOP or abort pressed while it was trying to land.
+      if (this.cancel) return { status: this.cancel };
       return { status: 'FAILED', message, commandIndex: index };
     } finally {
       this.running = false;
@@ -433,6 +461,11 @@ export class DroneRunner {
 
   /** Same start-up settings codrone-edu applies on connect. */
   private async setup() {
+    // If the link drops, the drone lands by itself after a few seconds (see LOST_LINK).
+    for (let i = 0; i < 2; i++) {
+      await this.send(lostConnectionPacket(LOST_LINK.neutralMs, LOST_LINK.landingMs, LOST_LINK.stopMs));
+      await this.wait(30);
+    }
     await this.send(commandPacket(CommandType.ControlSpeed, RUNNER_LIMITS.speedLevel));
     for (let i = 0; i < 2; i++) {
       await this.send(commandPacket(CommandType.ModeControlFlight, ControlFlightMode.Position));
@@ -514,6 +547,24 @@ export class DroneRunner {
       await this.link.send(landingPacket()).catch(() => {});
       await sleep(100);
     }
+  }
+
+  /**
+   * After losing contact: keep sending "land" until the drone answers again and reports it is down,
+   * for up to LOST_CONTACT_LAND_MS, or until STOP or abort. Returns whether it confirmed.
+   */
+  private async landUntilConfirmed(): Promise<boolean> {
+    const deadline = Date.now() + LOST_CONTACT_LAND_MS;
+    let lastSent = 0;
+    while (Date.now() < deadline && !this.cancel) {
+      if (this.isAnswering && this.status?.flight === 'Ready') return true;
+      if (Date.now() - lastSent > 300) {
+        await this.link.send(landingPacket()).catch(() => {});
+        lastSent = Date.now();
+      }
+      await sleep(100);
+    }
+    return this.isAnswering && this.status?.flight === 'Ready';
   }
 
   /**
@@ -804,7 +855,7 @@ export class DroneRunner {
   private async freshState(): Promise<DroneStatus> {
     const payload = await this.fresh(DataType.State, requestStatePacket);
     const state = payload && parseState(payload);
-    if (!state) throw new FlightError('Lost contact with the drone.');
+    if (!state) throw new LostContactError('Lost contact with the drone.');
     return state;
   }
 
@@ -852,7 +903,7 @@ export class DroneRunner {
 
   private check() {
     if (this.cancel) throw new Cancelled();
-    if (!this.isAnswering) throw new FlightError('Lost contact with the drone.');
+    if (!this.isAnswering) throw new LostContactError('Lost contact with the drone.');
     const f = this.status?.flight;
     if (f === 'Accident' || f === 'Error' || f === 'Stop') throw new FlightError(`The drone reported “${f}” and stopped flying.`);
     if (this.lowBatterySince !== null && Date.now() - this.lowBatterySince > LOW_BATTERY_MS && airborne(f))

@@ -39,7 +39,13 @@ function controller(overrides: Partial<RealDroneController> = {}): RealDroneCont
   };
 }
 
-const flying = (activeIndex: number | null): RealFlight => ({ phase: 'flying', commands: PROGRAM, activeIndex, landing: false });
+const flying = (activeIndex: number | null, warning: string | null = null): RealFlight => ({
+  phase: 'flying',
+  commands: PROGRAM,
+  activeIndex,
+  landing: false,
+  warning,
+});
 
 function panel(drone: RealDroneController, blockers: string[] = [], onShowBlock = vi.fn()) {
   render(<RealDronePanel drone={drone} commands={PROGRAM} blockers={blockers} onShowBlock={onShowBlock} />);
@@ -100,6 +106,15 @@ describe('RealDronePanel', () => {
     expect(drone.land).toHaveBeenCalled();
   });
 
+  it('warns loudly when contact is lost while the drone may still be flying', () => {
+    const drone = controller({ flight: flying(1, 'Lost contact with the drone. It should land by itself within 3 seconds. Press STOP if it does not.') });
+    panel(drone);
+    expect(screen.getByRole('alert')).toHaveTextContent('Lost contact with the drone');
+    // STOP stays available.
+    fireEvent.click(screen.getByRole('button', { name: /STOP/ }));
+    expect(drone.stop).toHaveBeenCalled();
+  });
+
   it('reports a failed flight and links to the block', () => {
     const onShowBlock = panel(
       controller({
@@ -137,7 +152,7 @@ describe('App with a real drone', () => {
   it('highlights the block being flown and disables the simulator Run', async () => {
     const view = await appWith(DEFAULT_MAZE.exampleXml!, controller());
     fakeDrone = controller({
-      flight: { phase: 'flying', commands: PROGRAM, activeIndex: 1, landing: false },
+      flight: { phase: 'flying', commands: PROGRAM, activeIndex: 1, landing: false, warning: null },
     });
     view.rerender(<App />);
     expect(editor.props!.activeBlockId).toBe('b2');

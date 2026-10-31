@@ -42,6 +42,8 @@ export class FakeDrone implements DroneLink {
   /** Extra rotation at the end of a turn, either method (as seen on hardware). */
   overshootDeg = 0;
   readonly turns: number[] = [];
+  /** Lost-link settings received: [neutral ms, landing ms, stop ms]. */
+  readonly lostLinkSettings: number[][] = [];
   private settleTimer: ReturnType<typeof setTimeout> | undefined;
   /** The controller's single pending-request slot (newest request wins). */
   private pendingRequest: number | null = null;
@@ -120,6 +122,11 @@ export class FakeDrone implements DroneLink {
 
   private command(p: Packet) {
     const d = p.payload;
+    if (p.dataType === DataType.LostConnection) {
+      const view = new DataView(d.buffer, d.byteOffset, d.byteLength);
+      this.lostLinkSettings.push([view.getUint16(0, true), view.getUint16(2, true), view.getUint32(4, true)]);
+      return;
+    }
     if (p.dataType === DataType.Command) {
       const [type, option] = [d[0], d[1]];
       if (type === CommandType.Stop) {
