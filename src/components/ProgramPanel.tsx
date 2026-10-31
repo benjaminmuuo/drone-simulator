@@ -95,7 +95,9 @@ export function ProgramPanel(props: Props) {
           <h2 id="program-title" className="card__title">
             Program
           </h2>
-          <p className="card__subtitle">Snap blocks into one stack, then press Run.</p>
+          <p className="card__subtitle">
+            Snap blocks into one stack, then press Run. Hold ⌘ (Ctrl on Windows) to drag the blocks below too.
+          </p>
         </div>
         <div className="toolbar" role="group" aria-label="Program actions">
           <button type="button" className="btn btn--ghost btn--sm" onClick={onNew}>

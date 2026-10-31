@@ -20,6 +20,28 @@ export function registerRobolinkBlocks(): void {
   Blockly.config.snapRadius = 48;
   Blockly.config.connectingSnapRadius = 64;
   Blockly.config.currentConnectionPreference = 20;
+  dragSingleBlocks();
+}
+
+/**
+ * Dragging a block out of a stack moves just that block, and the blocks below
+ * close the gap ("heal" the stack). Holding ⌘, Ctrl or Alt (Option) moves the
+ * block with everything below it. On a Mac, Ctrl+click opens the context menu, so
+ * Mac users hold ⌘ or Option. This is the reverse of Blockly's default, where a
+ * plain drag takes the whole tail of the stack along.
+ *
+ * Blockly creates each block's drag strategy after the block's own setup runs,
+ * so the rule is changed on the strategy class rather than per block.
+ * Keyboard moves keep Blockly's behaviour.
+ */
+function dragSingleBlocks(): void {
+  type HealRule = (this: unknown, e: PointerEvent | KeyboardEvent | undefined) => boolean;
+  const strategy = Blockly.dragging.BlockDragStrategy.prototype as unknown as { shouldHealStack: HealRule };
+  const blocklyRule = strategy.shouldHealStack;
+  strategy.shouldHealStack = function (e) {
+    if (typeof PointerEvent !== 'undefined' && e instanceof PointerEvent) return !(e.ctrlKey || e.metaKey || e.altKey);
+    return blocklyRule.call(this, e);
+  };
 }
 
 const style = (primary: string, secondary: string, tertiary: string) => ({

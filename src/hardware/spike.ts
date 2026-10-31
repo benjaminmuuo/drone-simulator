@@ -3,6 +3,7 @@
  * Flies small test programs through DroneRunner so moves, turns and the
  * safety paths can be checked on a real drone before the app UI uses them.
  */
+import { MAZES } from '../mazes';
 import { describeCommand } from '../parser/describeCommand';
 import { parseRobolinkXml } from '../parser/RobolinkXmlParser';
 import type { DroneCommand } from '../parser/types';
@@ -49,21 +50,8 @@ const PROGRAMS: [string, () => readonly DroneCommand[]][] = [
   ['Turn right 90°', () => [T, turn('RIGHT', 90), L]],
   ['Turn left 90°', () => [T, turn('LEFT', 90), L]],
   ['Turn right 90° → forward 40 cm', () => [T, turn('RIGHT', 90), move('FORWARD', 40), L]],
-  // The app's Example U-turn, but 40 cm across instead of 10 cm so the sideways step is easy to see.
-  // (The app keeps 10 cm: 40 cm would miss the Beginner Course landing pad.)
-  [
-    'U-turn: forward 50, right, 40 cm across, right, forward 50',
-    () => [
-      T,
-      { type: 'HOVER', durationSeconds: 2, blockId: null },
-      move('FORWARD', 50),
-      turn('RIGHT', 90),
-      move('FORWARD', 40),
-      turn('RIGHT', 90),
-      move('FORWARD', 50),
-      L,
-    ],
-  ],
+  // Every course's example program, so lessons and mazes can be flown for real.
+  ...MAZES.filter((m) => m.exampleXml).map((m): [string, () => readonly DroneCommand[]] => [m.name, () => parse(m.exampleXml!)]),
 ];
 
 let link: SerialLink | null = null;

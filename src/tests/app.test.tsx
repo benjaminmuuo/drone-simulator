@@ -4,7 +4,8 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../app/App';
-import { EXAMPLE_PROGRAM_XML, STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
+import { STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
+import { DEFAULT_MAZE, findMaze } from '../mazes';
 import { editor } from './editorMock';
 
 vi.mock('../components/BlocklyEditor', () => import('./editorMock'));
@@ -20,6 +21,24 @@ async function upload(file: File) {
   if (!input) throw new Error('file input missing');
   await userEvent.upload(input, file);
 }
+
+/** Lesson 2: forward 50 to the cone, turn right, forward 50 onto the pad. A box stack is straight ahead. */
+const lesson2 = findMaze('lesson-2')!;
+
+function chooseCourse(id: string) {
+  fireEvent.change(screen.getByRole('combobox', { name: /Course/ }), { target: { value: id } });
+}
+
+/** Opens Lesson 2 and imports `xml` (its own solution by default). */
+async function lesson2With(xml = lesson2.exampleXml!) {
+  render(<App />);
+  chooseCourse('lesson-2');
+  await upload(xmlFile(xml, 'lesson-2.xml'));
+  await screen.findByText(/Program imported/);
+}
+
+/** main.xml, with its first 50 cm move made long enough to hit Lesson 2's box stack. */
+const crashing = () => fixture.replace('<field name="NUM">50</field>', '<field name="NUM">200</field>');
 
 async function importFixture() {
   render(<App />);
@@ -140,21 +159,20 @@ describe('block editor', () => {
     expect(screen.getByRole('list', { name: 'Program problems' })).toHaveTextContent('2 separate groups of blocks');
     expect(screen.getByRole('button', { name: /Run simulation/ })).toBeDisabled();
 
-    const badNumber = EXAMPLE_PROGRAM_XML.replace('<block type="hover">', '<block type="hover" id="slow">').replace(
-      '<field name="NUM">2</field>',
-      '<field name="NUM">999</field>',
-    );
+    const badNumber = fixture.replace('<field name="NUM">2</field>', '<field name="NUM">999</field>');
     await editorReports(badNumber);
     fireEvent.click(within(screen.getByRole('list', { name: 'Program problems' })).getByRole('button', { name: 'Show block' }));
-    expect(editor.focused).toEqual(['slow']);
+    expect(editor.focused).toEqual(['wP^sB$g8ZY#|plweMs_[']);
   });
 
-  it('New and Example load programs into the editor', async () => {
+  it('New and Example load programs into the editor; Example is the current course\'s solution', async () => {
     render(<App />);
     await editorReports(STARTER_PROGRAM_XML, 'init');
     fireEvent.click(screen.getByRole('button', { name: /Example/ }));
     fireEvent.click(screen.getByRole('button', { name: /New/ }));
-    expect(editor.loads).toEqual([EXAMPLE_PROGRAM_XML, STARTER_PROGRAM_XML]);
+    chooseCourse('maze-2');
+    fireEvent.click(screen.getByRole('button', { name: /Example/ }));
+    expect(editor.loads).toEqual([DEFAULT_MAZE.exampleXml, STARTER_PROGRAM_XML, findMaze('maze-2')!.exampleXml]);
   });
 
   it('an imported file stays "imported" until the student edits it', async () => {
@@ -179,10 +197,7 @@ describe('block editor', () => {
   });
 
   it('highlights the flying block and marks the failing one', async () => {
-    render(<App />);
-    const crashing = fixture.replace('<field name="NUM">50</field>', '<field name="NUM">200</field>');
-    await upload(xmlFile(crashing));
-    await screen.findByText(/Program imported/);
+    await lesson2With(crashing());
     useFakeFrames();
     fireEvent.click(screen.getByRole('button', { name: /Run simulation/ }));
     advance(200);
@@ -197,7 +212,7 @@ describe('block editor', () => {
 
 describe('playback', () => {
   it('runs the sample to completion with highlighting and success feedback', async () => {
-    await importFixture();
+    await lesson2With();
     useFakeFrames();
 
     fireEvent.click(screen.getByRole('button', { name: /Run simulation/ }));
@@ -206,28 +221,28 @@ describe('playback', () => {
     expect(screen.getByTestId('telemetry-status')).toHaveTextContent('Running');
     expect(screen.getByTestId('telemetry-command')).toHaveTextContent('1. Takeoff');
 
-    // Takeoff (1.2 s) + 2 s hover → into the first forward move.
-    advance(3_500);
+    // Takeoff (1.2 s) + 2 s hover = 3.2 simulated s, which is 6.4 s at the default 0.5× → into the first move.
+    advance(7_000);
     expect(stateOf(0)).toBe('done');
     expect(stateOf(1)).toBe('done');
     expect(stateOf(2)).toBe('active');
 
-    advance(10_000);
+    advance(20_000);
     expect(screen.getByRole('alert')).toHaveTextContent('Mission complete!');
     expect(screen.getByTestId('telemetry-status')).toHaveTextContent('Mission complete');
-    expect(screen.getByTestId('telemetry-x')).toHaveTextContent('60.0 cm');
-    expect(screen.getByTestId('telemetry-y')).toHaveTextContent('250.0 cm');
-    expect(screen.getByTestId('telemetry-heading')).toHaveTextContent('180°');
+    expect(screen.getByTestId('telemetry-x')).toHaveTextContent('200.0 cm');
+    expect(screen.getByTestId('telemetry-y')).toHaveTextContent('200.0 cm');
+    expect(screen.getByTestId('telemetry-heading')).toHaveTextContent('90°');
     expect(screen.getByTestId('telemetry-flight')).toHaveTextContent('Landed');
     expect(programItems().every((li) => li.getAttribute('data-state') === 'done')).toBe(true);
   });
 
   it('pauses, resumes and resets', async () => {
-    await importFixture();
+    await lesson2With();
     useFakeFrames();
 
     fireEvent.click(screen.getByRole('button', { name: /Run simulation/ }));
-    advance(3_800);
+    advance(7_000); // mid-way through the first move
     fireEvent.click(screen.getByRole('button', { name: /Pause/ }));
     expect(screen.getByTestId('telemetry-status')).toHaveTextContent('Paused');
     const pausedY = screen.getByTestId('telemetry-y').textContent;
@@ -241,15 +256,16 @@ describe('playback', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Reset/ }));
     expect(screen.getByTestId('telemetry-status')).toHaveTextContent('Ready');
-    expect(screen.getByTestId('telemetry-x')).toHaveTextContent('50.0 cm');
+    expect(screen.getByTestId('telemetry-x')).toHaveTextContent('150.0 cm');
     expect(screen.getByTestId('telemetry-y')).toHaveTextContent('250.0 cm');
     expect(screen.getByTestId('telemetry-flight')).toHaveTextContent('Landed');
     expect(programItems().every((li) => li.getAttribute('data-state') === 'pending')).toBe(true);
     expect(screen.getByRole('button', { name: /Run simulation/ })).toBeEnabled();
   });
 
-  it('plays faster at a higher speed', async () => {
-    await importFixture();
+  it('starts at 0.5× (close to a real drone) and plays faster at a higher speed', async () => {
+    await lesson2With();
+    expect(screen.getByRole('radio', { name: '0.5×' })).toHaveAttribute('aria-checked', 'true');
     useFakeFrames();
     fireEvent.click(screen.getByRole('radio', { name: '4×' }));
     fireEvent.click(screen.getByRole('button', { name: /Run simulation/ }));
@@ -258,11 +274,7 @@ describe('playback', () => {
   });
 
   it('reports a collision with the failing command highlighted', async () => {
-    render(<App />);
-    // Make the first forward move long enough to hit the hanging box.
-    const crashing = fixture.replace('<field name="NUM">50</field>', '<field name="NUM">200</field>');
-    await upload(xmlFile(crashing));
-    await screen.findByText(/Program imported/);
+    await lesson2With(crashing());
     useFakeFrames();
 
     fireEvent.click(screen.getByRole('button', { name: /Run simulation/ }));
@@ -285,12 +297,24 @@ describe('without WebGL', () => {
     expect(screen.getByRole('note')).toHaveTextContent('does not support 3D graphics (WebGL)');
     expect(screen.queryByRole('radiogroup', { name: 'Camera' })).not.toBeInTheDocument();
 
-    await upload(xmlFile(fixture));
+    chooseCourse('lesson-2');
+    await upload(xmlFile(lesson2.exampleXml!, 'lesson-2.xml'));
     await screen.findByText(/Program imported/);
     useFakeFrames();
     fireEvent.click(screen.getByRole('button', { name: /Run simulation/ }));
     advance(20_000);
     expect(screen.getByRole('alert')).toHaveTextContent('Mission complete!');
+  });
+
+  it('groups the courses: Flight School, then the mazes, then free flight', () => {
+    render(<App />);
+    const groups = screen.getByRole('combobox', { name: /Course/ }).querySelectorAll('optgroup');
+    expect([...groups].map((g) => [g.label, g.querySelectorAll('option').length])).toEqual([
+      ['Flight School', 5],
+      ['Maze challenges', 2],
+      ['Free flight', 1],
+    ]);
+    expect(screen.getByRole('heading', { name: 'Lesson 1: First flight' })).toBeInTheDocument();
   });
 
   it('can switch mazes', async () => {

@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { findMaze } from '../mazes';
 import type { CameraMode, CameraNudge, DroneWorldOptions, FollowView, WorldSnapshot } from '../three/createDroneWorld';
 
 // jsdom has no WebGL: pretend it does, and replace the three.js world with a recorder.
@@ -70,7 +71,12 @@ describe('3D view', () => {
   it('streams playback snapshots to the 3D world', async () => {
     render(<App />);
     await screen.findByTestId('maze-3d');
-    await userEvent.upload(document.querySelector<HTMLInputElement>('input[type="file"]')!, new File([fixture], 'main.xml'));
+    // Lesson 2: forward to the cone, turn right, forward onto the pad.
+    fireEvent.change(screen.getByRole('combobox', { name: /Course/ }), { target: { value: 'lesson-2' } });
+    await userEvent.upload(
+      document.querySelector<HTMLInputElement>('input[type="file"]')!,
+      new File([findMaze('lesson-2')!.exampleXml!], 'lesson-2.xml'),
+    );
     await screen.findByText(/Program imported/);
 
     vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance', 'setTimeout', 'clearTimeout'] });
@@ -94,9 +100,9 @@ describe('3D view', () => {
 
     const last = world.snapshots.at(-1)!;
     expect(last.phase).toBe('finished');
-    expect(last.timeline.segments).toHaveLength(8);
+    expect(last.timeline.segments).toHaveLength(6);
     expect(last.elapsed).toBeCloseTo(last.timeline.totalSeconds, 6);
-    expect([...last.visitedCheckpoints]).toEqual(['flag']);
+    expect([...last.visitedCheckpoints]).toEqual(['corner']);
     expect(screen.getByRole('alert')).toHaveTextContent('Mission complete!');
   });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildTimeline, frameAt } from '../animation/timeline';
 import { simulate } from '../engine/SimulationEngine';
-import { beginnerMaze } from '../mazes/beginner-maze';
+import { beginnerMaze } from './fixtures/testMazes';
 import { DEFAULT_FLIGHT_HEIGHT_CM } from '../mazes/constants';
 import { openField } from '../mazes/open-field';
 import type { DroneCommand } from '../parser/types';

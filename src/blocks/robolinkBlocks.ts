@@ -181,21 +181,3 @@ export const STARTER_PROGRAM_XML =
   '<block type="takeoff" x="40" y="40"><next><block type="land"></block></next></block>' +
   '</xml>';
 
-/** The reference U-turn program (same blocks as main.xml): solves the Beginner Course. */
-export const EXAMPLE_PROGRAM_XML =
-  '<xml xmlns="https://developers.google.com/blockly/xml">' +
-  '<block type="takeoff" x="40" y="40"><next>' +
-  '<block type="hover"><value name="NUM0"><shadow type="only_positive_decimal"><field name="NUM">2</field></shadow></value><next>' +
-  '<block type="go_distance"><field name="TYPE">Direction.FORWARD</field><field name="UNIT">cm</field>' +
-  '<value name="NUM0"><shadow type="only_positive_decimal_50"><field name="NUM">50</field></shadow></value><next>' +
-  '<block type="turn_direction_degrees"><field name="TYPE">Direction.RIGHT</field>' +
-  '<value name="NUM0"><shadow type="limit_0_To_360"><field name="NUM">90</field></shadow></value><next>' +
-  '<block type="go_distance"><field name="TYPE">Direction.FORWARD</field><field name="UNIT">cm</field>' +
-  '<value name="NUM0"><shadow type="only_positive_decimal_50"><field name="NUM">10</field></shadow></value><next>' +
-  '<block type="turn_direction_degrees"><field name="TYPE">Direction.RIGHT</field>' +
-  '<value name="NUM0"><shadow type="limit_0_To_360"><field name="NUM">90</field></shadow></value><next>' +
-  '<block type="go_distance"><field name="TYPE">Direction.FORWARD</field><field name="UNIT">cm</field>' +
-  '<value name="NUM0"><shadow type="only_positive_decimal_50"><field name="NUM">50</field></shadow></value><next>' +
-  '<block type="land"></block>' +
-  '</next></block></next></block></next></block></next></block></next></block></next></block></next></block>' +
-  '</xml>';

@@ -1,9 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DroneRunner, RUNNER_LIMITS } from '../hardware/DroneRunner';
 import { parseRobolinkXml } from '../parser/RobolinkXmlParser';
-import { EXAMPLE_PROGRAM_XML } from '../blocks/robolinkBlocks';
 import type { DroneCommand } from '../parser/types';
 import { FLIGHT, FakeDrone } from './fakeDrone';
+
+/** A U-turn (forward 50, right, 10, right, 50): main.xml, a real Robolink Blockly export. */
+const UTURN_XML = readFileSync(resolve(__dirname, 'fixtures/main.xml'), 'utf8');
 
 function parse(xml: string): readonly DroneCommand[] {
   const r = parseRobolinkXml(xml);
@@ -50,7 +54,7 @@ afterEach(() => {
 describe('DroneRunner', () => {
   it('flies the reference U-turn program in order and lands', async () => {
     const steps: number[] = [];
-    const outcome = await settle(runner.run(parse(EXAMPLE_PROGRAM_XML), { onStep: (i) => steps.push(i) }));
+    const outcome = await settle(runner.run(parse(UTURN_XML), { onStep: (i) => steps.push(i) }));
 
     expect(outcome).toEqual({ status: 'COMPLETED' });
     expect(steps).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
@@ -64,7 +68,7 @@ describe('DroneRunner', () => {
 
   it('waits for the drone to steady after a turn, so the next move is not skipped', async () => {
     const log: string[] = [];
-    await settle(runner.run(parse(EXAMPLE_PROGRAM_XML), { onLog: (m) => log.push(m) }));
+    await settle(runner.run(parse(UTURN_XML), { onLog: (m) => log.push(m) }));
     // 50 forward, turn right, 10 forward, turn right, 50 forward: a U-turn 10 cm to the right.
     expect(drone.moves).toHaveLength(3);
     expect(drone.x).toBeCloseTo(0, 1);
@@ -104,7 +108,7 @@ describe('DroneRunner', () => {
     // Overshoot more than the stopping margin allows for, so every turn ends ~5° too far.
     drone.overshootDeg = 8;
     const log: string[] = [];
-    await settle(runner.run(parse(EXAMPLE_PROGRAM_XML), { onLog: (m) => log.push(m) }));
+    await settle(runner.run(parse(UTURN_XML), { onLog: (m) => log.push(m) }));
     const turned = log.filter((m) => m.startsWith('turned')).map((m) => Number(/turned (\d+)°/.exec(m)![1]));
     expect(turned).toHaveLength(2);
     // The second turn is smaller, making up for the first one's overshoot...
@@ -117,7 +121,7 @@ describe('DroneRunner', () => {
     // Like the hardware: the drone ends ~5° past its target.
     drone.overshootDeg = 5;
     const log: string[] = [];
-    const outcome = await settle(runner.run(parse(EXAMPLE_PROGRAM_XML), { onLog: (m) => log.push(m) }));
+    const outcome = await settle(runner.run(parse(UTURN_XML), { onLog: (m) => log.push(m) }));
     expect(outcome).toEqual({ status: 'COMPLETED' });
     // Aimed short (starting estimate 4°), then shorter once it learned the drone overshoots ~5°.
     expect(drone.turns[0]).toBe(-86);
@@ -135,11 +139,11 @@ describe('DroneRunner', () => {
     drone.travelRatio = 0.9;
     const moved = (log: string[]) => log.filter((m) => m.startsWith('moved')).map((m) => Number(/moved (\d+) cm/.exec(m)![1]));
     const first: string[] = [];
-    await settle(runner.run(parse(EXAMPLE_PROGRAM_XML), { onLog: (m) => first.push(m) }));
+    await settle(runner.run(parse(UTURN_XML), { onLog: (m) => first.push(m) }));
     expect(moved(first)[0]).toBe(45);
-    for (let flight = 0; flight < 2; flight++) await settle(runner.run(parse(EXAMPLE_PROGRAM_XML)));
+    for (let flight = 0; flight < 2; flight++) await settle(runner.run(parse(UTURN_XML)));
     const last: string[] = [];
-    await settle(runner.run(parse(EXAMPLE_PROGRAM_XML), { onLog: (m) => last.push(m) }));
+    await settle(runner.run(parse(UTURN_XML), { onLog: (m) => last.push(m) }));
     // A few flights later the 50 cm moves come out at ~49 cm, because it sends ~54 cm.
     expect(moved(last)[0]).toBeGreaterThanOrEqual(48);
     expect(last.find((m) => m.startsWith('moved'))).toMatch(/\(asked 50 cm, sent 5[3-6] cm\)/);
@@ -178,7 +182,7 @@ describe('DroneRunner', () => {
 
   it('keeps the learned overshoot for the next flight', async () => {
     drone.overshootDeg = 8;
-    await settle(runner.run(parse(EXAMPLE_PROGRAM_XML)));
+    await settle(runner.run(parse(UTURN_XML)));
     drone.yaw = 0;
     drone.turns.length = 0;
     const log: string[] = [];
@@ -217,7 +221,7 @@ describe('DroneRunner', () => {
   });
 
   it('sends strafes and reverses on the right axes', async () => {
-    const program = parse(EXAMPLE_PROGRAM_XML).slice(0, 1);
+    const program = parse(UTURN_XML).slice(0, 1);
     await settle(
       runner.run([
         ...program,

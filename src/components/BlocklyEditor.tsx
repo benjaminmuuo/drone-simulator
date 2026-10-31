@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as Blockly from 'blockly/core';
 import { birdsTheme, registerRobolinkBlocks } from '../blocks/blocklySetup';
-import { EXAMPLE_PROGRAM_XML, TOOLBOX } from '../blocks/robolinkBlocks';
+import { STARTER_PROGRAM_XML, TOOLBOX } from '../blocks/robolinkBlocks';
 
 /** Why the editor is reporting its XML. */
 export type EditorChangeReason = 'init' | 'load' | 'edit';
@@ -90,7 +90,8 @@ export default function BlocklyEditor(props: BlocklyEditorProps) {
     workspaceRef.current = workspace;
 
     const initial = savedProgram();
-    if (!(initial && load(workspace, initial))) load(workspace, EXAMPLE_PROGRAM_XML);
+    // A first visit starts from take off → land: Flight School lesson 1 builds from there.
+    if (!(initial && load(workspace, initial))) load(workspace, STARTER_PROGRAM_XML);
     const report = (reason: EditorChangeReason) => {
       const xml = toXml(workspace);
       saveProgram(xml);

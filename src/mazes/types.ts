@@ -51,4 +51,6 @@ export interface MazeDefinition {
   readonly droneRadiusCm: number;
   /** Spacing of the optional background grid. */
   readonly gridSpacingCm: number;
+  /** A program that solves this course (Robolink XML), loaded by the Example button. */
+  readonly exampleXml?: string;
 }

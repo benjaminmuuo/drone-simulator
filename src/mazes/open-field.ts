@@ -1,3 +1,4 @@
+import { programXml } from '../blocks/programXml';
 import type { MazeDefinition } from './types';
 
 /** An empty 4 m × 3 m floor for free practice: land back where you started. */
@@ -15,4 +16,5 @@ export const openField: MazeDefinition = {
   checkpoints: [],
   droneRadiusCm: 8,
   gridSpacingCm: 25,
+  exampleXml: programXml([['takeoff'], ['hover', 2], ['turn-right', 360], ['land']]),
 };

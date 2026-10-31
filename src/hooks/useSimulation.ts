@@ -54,7 +54,8 @@ export function useSimulation(
 
   const [phase, setPhase] = useState<PlaybackPhase>('idle');
   const [elapsed, setElapsed] = useState(0);
-  const [speed, setSpeed] = useState<PlaybackSpeed>(1);
+  // 0.5× looks closest to a real CoDrone EDU flying the same program.
+  const [speed, setSpeed] = useState<PlaybackSpeed>(0.5);
   const speedRef = useRef(speed);
   speedRef.current = speed;
 

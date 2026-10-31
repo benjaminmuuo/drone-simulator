@@ -28,7 +28,8 @@ use **exactly** Robolink's block types, field names and number "shadow" types, s
 - **During a run:** the block being flown gets a yellow outline. If the flight fails, the failing
   block gets a warning badge.
 - **Saving:** the program is kept in the browser (`localStorage`), so a reload does not lose
-  work. **New** starts from *take off → land*. **Example** loads the reference U-turn program.
+  work. **New** starts from *take off → land*, which is also what a first visit opens with.
+  **Example** loads the solution for the course that's selected.
 
 The palette is a slim category rail: Flight (take off, hover, land), Move (go forward /
 backward / left / right) and Turn. Clicking a category slides out its blocks, and the drawer
@@ -36,6 +37,11 @@ closes once a block is dragged out, so the full width stays free for building. O
 the rail runs along the top.
 
 Dragging is tuned to feel steady:
+
+- Dragging a block out of a stack moves **just that block**, and the blocks below close the gap.
+  Hold **⌘** (Mac) or **Ctrl** (Windows) while dragging to move a block together with every block
+  below it. (This is the reverse of Blockly's default. On a Mac, Ctrl+click opens the context menu,
+  so use ⌘ or Option.)
 
 - No grid snapping, so blocks glide instead of jumping in steps.
 - A wider connection snap radius (48–64 px) makes stacking forgiving.
@@ -262,17 +268,46 @@ imports, but with **warnings**, so students can watch where it fails.
 - The mission succeeds when every command runs, the drone ends **landed**, its centre is inside
   the landing zone, and every checkpoint was passed within its radius.
 
-## Adding a maze
+## Courses
 
-1. Create `src/mazes/my-maze.ts` that exports a `MazeDefinition` (see `src/mazes/types.ts`).
+The **Course** picker has three groups. Every course is laid out in the same 4 × 3 m taped arena,
+and each has an **Example** solution:
+
+| Group | Course | Students practise |
+|---|---|---|
+| Flight School | Lesson 1: First flight | take off, hover 2 s, forward 50 cm, land on the pad |
+| | Lesson 2: Turn right | …forward 50 cm to a cone, turn right 90°, forward 50 cm (a box stack blocks going straight on) |
+| | Lesson 3: Turn left | the same, turning left |
+| | Lesson 4: The square | a 50 cm square, turning right at each corner, back onto the start pad |
+| | Lesson 5: Figure eight | one square clockwise (right turns), then one anticlockwise (left turns) |
+| Maze challenges | Maze 1: Zig-zag | start mark to finish pad between two box walls: right, right, left |
+| | Maze 2: Snake | a longer route: left, left, right, right |
+| Free flight | Open floor | no goal: practise anything, land back on the pad |
+
+The layouts follow what flight tests with a real CoDrone EDU showed (`src/mazes/courseRules.ts`):
+- moves are multiples of 50 cm, the most tested distance;
+- landing pads are 50 × 50 cm, plenty for the drone's ±5 cm per move;
+- the route stays at least **40 cm** from every box wall and from the arena edge. That covers
+  about 8 cm of drone radius, up to about 15 cm of drift over a course, and a margin.
+
+`src/tests/courses.test.ts` checks every course: it is valid, its Example completes it while keeping
+the 40 cm clearance, and "take off, land" alone can't pass it.
+
+Playback starts at **0.5×**, which looks closest to the real drone flying the same program.
+
+## Adding a course
+
+1. Create a `MazeDefinition` in `src/mazes/` (see `src/mazes/types.ts`), with an `exampleXml` solution
+   (`programXml([...])` builds one), and follow the sizes in `src/mazes/courseRules.ts`.
    Measure the real course and use the same numbers: positions are from the 0,0 corner, and each
    obstacle's `heightCm` is its real height (default 120 cm). In the classroom scene, obstacles
    are drawn as stacks of 40 cm cardboard boxes. In the forest, narrow ones are concrete walls
    and square ones are wooden crates.
-2. Add it to the `MAZES` array in `src/mazes/index.ts`. It appears in the maze picker automatically.
-3. Run `npm test`. The suite runs `validateMaze` on every registered maze. This catches a start
-   inside an obstacle, shapes outside the arena, duplicate IDs, checkpoints inside walls, and
-   similar mistakes.
+2. Add it to a group in `COURSE_GROUPS` in `src/mazes/index.ts`. It appears in the course picker
+   automatically.
+3. Run `npm test`. The suite runs `validateMaze` and the course checks above on every course. This
+   catches a start inside an obstacle, shapes outside the arena, duplicate IDs, checkpoints inside
+   walls, a route too close to a wall, and similar mistakes.
 
 ## Adding a Blockly block
 
@@ -320,5 +355,5 @@ src/
   Workspaces with several loose stacks are rejected as ambiguous.
 - The landing check uses the drone's centre point, and no-fly zones are checked against the drone's
   full body.
-- Playback speeds (40 cm/s, 75°/s turns, 1.2 s takeoff and landing) are only for display. They are not
-  real CoDrone performance figures.
+- Playback speeds (40 cm/s, 75°/s turns, 1.2 s takeoff and landing at 1×) are only for display. At
+  the default 0.5×, a program takes about as long as on a real CoDrone EDU.

@@ -3,7 +3,9 @@ import { resolve } from 'node:path';
 import * as Blockly from 'blockly/core';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { registerRobolinkBlocks } from '../blocks/blocklySetup';
-import { EXAMPLE_PROGRAM_XML, PALETTE_BLOCKS, STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
+import { programXml } from '../blocks/programXml';
+import { PALETTE_BLOCKS, STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
+import { MAZES } from '../mazes';
 import { parseRobolinkXml } from '../parser/RobolinkXmlParser';
 import type { DroneCommand } from '../parser/types';
 
@@ -40,9 +42,37 @@ describe('Robolink-compatible blocks', () => {
     expect(xml).toContain('<shadow type="limit_0_To_360"');
   });
 
-  it('example program matches the reference program', () => {
+  it('the program builder writes the same blocks as a real Robolink export', () => {
     const strip = (commands: readonly DroneCommand[]) => commands.map(({ blockId: _id, ...rest }) => rest);
-    expect(strip(commandsOf(roundTrip(EXAMPLE_PROGRAM_XML)))).toEqual(strip(commandsOf(fixture)));
+    const uTurn = programXml([
+      ['takeoff'],
+      ['hover', 2],
+      ['forward', 50],
+      ['turn-right', 90],
+      ['forward', 10],
+      ['turn-right', 90],
+      ['forward', 50],
+      ['land'],
+    ]);
+    expect(strip(commandsOf(roundTrip(uTurn)))).toEqual(strip(commandsOf(fixture)));
+  });
+
+  it.each(MAZES.map((m) => [m.name, m.exampleXml!] as const))('%s example loads into the editor unchanged', (_name, xml) => {
+    // Blockly gives the blocks IDs as it loads them; the program itself must not change.
+    const strip = (commands: readonly DroneCommand[]) => commands.map(({ blockId: _id, ...rest }) => rest);
+    expect(strip(commandsOf(roundTrip(xml)))).toEqual(strip(commandsOf(xml)));
+  });
+
+  it('dragging moves one block; Ctrl, ⌘ or Alt moves it with the blocks below', () => {
+    const heals = (init?: PointerEventInit) =>
+      (Blockly.dragging.BlockDragStrategy.prototype as unknown as { shouldHealStack(e: PointerEvent): boolean }).shouldHealStack.call(
+        {},
+        new PointerEvent('pointerdown', init),
+      );
+    expect(heals()).toBe(true);
+    expect(heals({ ctrlKey: true })).toBe(false);
+    expect(heals({ metaKey: true })).toBe(false);
+    expect(heals({ altKey: true })).toBe(false);
   });
 
   it('starter program is take off then land', () => {

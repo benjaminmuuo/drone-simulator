@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../app/App';
-import { EXAMPLE_PROGRAM_XML, STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
+import { STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
+import { DEFAULT_MAZE } from '../mazes';
 import { RealDronePanel } from '../components/RealDronePanel';
 import type { RealDroneController, RealFlight } from '../hardware/useRealDrone';
 import type { DroneCommand } from '../parser/types';
@@ -124,17 +125,17 @@ describe('App with a real drone', () => {
 
   it('only lets a program that passes the simulation fly', async () => {
     const view = await appWith(STARTER_PROGRAM_XML, controller());
-    // Take off → land misses the landing pad on the Beginner Course.
+    // Take off → land misses the landing pad in Flight School lesson 1.
     expect(flyButton()).toBeDisabled();
     expect(screen.getByTestId('real-drone-reasons')).toHaveTextContent(/fails in the simulator/);
 
-    act(() => editor.props!.onChange(EXAMPLE_PROGRAM_XML, 'edit'));
+    act(() => editor.props!.onChange(DEFAULT_MAZE.exampleXml!, 'edit'));
     view.rerender(<App />);
     expect(flyButton()).toBeEnabled();
   });
 
   it('highlights the block being flown and disables the simulator Run', async () => {
-    const view = await appWith(EXAMPLE_PROGRAM_XML, controller());
+    const view = await appWith(DEFAULT_MAZE.exampleXml!, controller());
     fakeDrone = controller({
       flight: { phase: 'flying', commands: PROGRAM, activeIndex: 1, landing: false },
     });

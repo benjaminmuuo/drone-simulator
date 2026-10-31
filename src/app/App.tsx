@@ -1,6 +1,6 @@
 import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import { STARTER_PROGRAM_XML, EXAMPLE_PROGRAM_XML } from '../blocks/robolinkBlocks';
+import { STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
 import type { EditorChangeReason } from '../components/BlocklyEditor';
 import type { ViewportController } from '../components/Maze3DViewport';
 import { FlightHud } from '../components/FlightHud';
@@ -14,7 +14,7 @@ import { TransportBar } from '../components/TransportBar';
 import { useRealDrone } from '../hardware/useRealDrone';
 import { useSimulation } from '../hooks/useSimulation';
 import type { PlaybackPhase } from '../hooks/useSimulation';
-import { DEFAULT_MAZE, MAZES, findMaze } from '../mazes';
+import { COURSE_GROUPS, DEFAULT_MAZE, findMaze } from '../mazes';
 import { DEFAULT_FLIGHT_HEIGHT_CM, FLIGHT_HEIGHT_OPTIONS_CM, OBSTACLE_CLEARANCE_CM } from '../mazes/constants';
 import type { Point } from '../mazes/types';
 import { describeCommand } from '../parser/describeCommand';
@@ -386,7 +386,7 @@ export function App() {
             onFile={handleFile}
             onDownload={() => program && downloadXml(program.xml, program.fileName ?? 'drone-program.xml')}
             onNew={() => startFresh(STARTER_PROGRAM_XML)}
-            onExample={() => startFresh(EXAMPLE_PROGRAM_XML)}
+            onExample={() => startFresh(maze.exampleXml ?? STARTER_PROGRAM_XML)}
             onShowBlock={onShowBlock}
           />
         </div>
@@ -413,10 +413,14 @@ export function App() {
                   }}
                   disabled={phase === 'running'}
                 >
-                  {MAZES.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
+                  {COURSE_GROUPS.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.courses.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </label>
