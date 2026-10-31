@@ -81,9 +81,21 @@ const TURN_GAIN = 10;
  * The runner learns this as it flies and aims each turn short by its current estimate.
  */
 const INITIAL_OVERSHOOT_DEG = 4;
-const MAX_OVERSHOOT_DEG = 15;
+const MAX_OVERSHOOT_DEG = 10;
+/**
+ * Turns outside this overshoot range (e.g. 111° for 90°, after a radio gap) say nothing about
+ * the drone's usual overshoot, so they are not learned from.
+ */
+const OVERSHOOT_SAMPLE_RANGE = { min: -5, max: 12 } as const;
 /** How fast the estimate follows each new measurement (0–1). */
-const OVERSHOOT_LEARNING_RATE = 0.5;
+const OVERSHOOT_LEARNING_RATE = 0.25;
+/**
+ * Heading replies sometimes stop for a few hundred ms (seen on hardware: 2 turns in ~18).
+ * While the drone is still, waiting is safe; mid-turn, wait this long before stopping the
+ * rotation, then wait up to HEADING_TIMEOUT_MS more.
+ */
+const HEADING_TIMEOUT_MS = 1200;
+const TURN_READING_MS = 200;
 const LOW_BATTERY_MS = 3000;
 
 export type RunOutcome =
@@ -281,8 +293,12 @@ export class DroneRunner {
         }
         if (aim !== 0) {
           const observed = sign * turned - Math.abs(aim);
-          const next = this.overshootDeg + OVERSHOOT_LEARNING_RATE * (observed - this.overshootDeg);
-          this.overshootDeg = Math.max(0, Math.min(MAX_OVERSHOOT_DEG, next));
+          if (observed < OVERSHOOT_SAMPLE_RANGE.min || observed > OVERSHOOT_SAMPLE_RANGE.max) {
+            log(`(unusual turn: not used to learn the overshoot)`);
+          } else {
+            const next = this.overshootDeg + OVERSHOOT_LEARNING_RATE * (observed - this.overshootDeg);
+            this.overshootDeg = Math.max(0, Math.min(MAX_OVERSHOOT_DEG, next));
+          }
         }
         this.courseError = wrap180(this.courseError + turned - degrees);
         const wrongWay = turned !== 0 && Math.sign(turned) !== Math.sign(degrees);
@@ -353,7 +369,7 @@ export class DroneRunner {
     try {
       await this.settle(log);
       start = await this.freshPosition();
-      const motion = await this.fresh(DataType.Motion, requestMotionPacket);
+      const motion = await this.fresh(DataType.Motion, requestMotionPacket, HEADING_TIMEOUT_MS);
       heading = motion && parseMotionYaw(motion);
       await this.sendUntilMoving(packet, 'The drone did not start the move.');
     } finally {
@@ -408,7 +424,7 @@ export class DroneRunner {
   /** Measures the heading once the drone has steadied (State polling paused by the caller). */
   private async settledYaw(log: (m: string) => void): Promise<number | null> {
     await this.settle(log);
-    const motion = await this.fresh(DataType.Motion, requestMotionPacket);
+    const motion = await this.fresh(DataType.Motion, requestMotionPacket, HEADING_TIMEOUT_MS);
     return motion && parseMotionYaw(motion);
   }
 
@@ -454,7 +470,12 @@ export class DroneRunner {
       start = prev;
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
-        const current = await this.freshYaw();
+        let current = await this.tryYaw(TURN_READING_MS);
+        if (current === null) {
+          // Late reply: stop rotating while waiting, so a radio gap can't turn into an overshoot.
+          await this.send(controlPacket(0, 0, 0, 0));
+          current = await this.freshYaw();
+        }
         // Signed progress, so turning past the target (or the wrong way) can't count as progress.
         remaining -= sign * wrap180(current - prev);
         prev = current;
@@ -482,9 +503,9 @@ export class DroneRunner {
    * newer than the request, or null after FRESH_TIMEOUT_MS. Callers pause State polling:
    * the controller holds one pending request, so a poll would replace this one.
    */
-  private async fresh(dataType: number, request: () => Uint8Array): Promise<Uint8Array | null> {
+  private async fresh(dataType: number, request: () => Uint8Array, timeoutMs = FRESH_TIMEOUT_MS): Promise<Uint8Array | null> {
     const asked = Date.now();
-    while (Date.now() - asked < FRESH_TIMEOUT_MS) {
+    while (Date.now() - asked < timeoutMs) {
       await this.send(request());
       await this.wait(FRESH_RETRY_MS);
       const reply = this.latest.get(dataType);
@@ -493,10 +514,15 @@ export class DroneRunner {
     return null;
   }
 
+  /** A fresh heading, or null if none arrives within `timeoutMs`. */
+  private async tryYaw(timeoutMs: number): Promise<number | null> {
+    const payload = await this.fresh(DataType.Motion, requestMotionPacket, timeoutMs);
+    return payload && parseMotionYaw(payload);
+  }
+
   private async freshYaw(): Promise<number> {
-    const payload = await this.fresh(DataType.Motion, requestMotionPacket);
-    const yaw = payload && parseMotionYaw(payload);
-    if (yaw === null || yaw === undefined) throw new FlightError('The drone stopped sending its heading, so the turn was cancelled.');
+    const yaw = await this.tryYaw(HEADING_TIMEOUT_MS);
+    if (yaw === null) throw new FlightError('The drone stopped sending its heading, so the turn was cancelled.');
     return yaw;
   }
 

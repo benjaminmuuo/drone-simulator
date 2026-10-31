@@ -123,10 +123,32 @@ describe('DroneRunner', () => {
     expect(drone.turns[0]).toBe(-86);
     expect(Math.abs(drone.turns[1]!)).toBeLessThan(86);
     for (const line of log.filter((m) => m.startsWith('turned'))) expect(line).toMatch(/(on course|[0-2]° (left|right) of course)$/);
-    expect(runner.overshootDeg).toBeGreaterThan(4.4);
+    // Learning is gradual: the estimate moves from 4° towards the drone's 5°.
+    expect(runner.overshootDeg).toBeGreaterThan(4.2);
     // Same end point as planned: back level with the start, 10 cm to the right.
     expect(drone.x).toBeCloseTo(0, 1);
     expect(drone.y).toBeCloseTo(-0.1, 1);
+  });
+
+  it('does not learn from an unusual turn', async () => {
+    drone.overshootDeg = 25;
+    const log: string[] = [];
+    await settle(runner.run([cmd.takeoff, cmd.turn('RIGHT', 90), cmd.land], { onLog: (m) => log.push(m) }));
+    expect(log).toContain('(unusual turn: not used to learn the overshoot)');
+    expect(runner.overshootDeg).toBe(4);
+  });
+
+  it('rides out a gap in heading replies mid-turn without overshooting', async () => {
+    runner.turnMethod = 'yaw-loop';
+    const run = runner.run([cmd.takeoff, cmd.turn('RIGHT', 90), cmd.land]);
+    // Take-off and the start of the turn, then ~0.7 s with no heading replies.
+    await vi.advanceTimersByTimeAsync(4700);
+    drone.answerMotion = false;
+    await vi.advanceTimersByTimeAsync(700);
+    drone.answerMotion = true;
+    expect(await settle(run)).toEqual({ status: 'COMPLETED' });
+    expect(drone.yaw).toBeLessThan(-80);
+    expect(drone.yaw).toBeGreaterThan(-100);
   });
 
   it('keeps the learned overshoot for the next flight', async () => {
