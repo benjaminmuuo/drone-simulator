@@ -95,12 +95,10 @@ describe('DroneRunner', () => {
         onLog: (m) => log.push(m),
       }),
     );
-    const moves = measurements.filter((m): m is Extract<Measurement, { kind: 'move' }> => m.kind === 'move');
-    expect(moves[0]!.correctionDeg).toBe(0);
-    // The nose points 4° left of the line, so the move aims 4° right.
-    expect(moves[1]!.correctionDeg).toBeCloseTo(-4, 0);
-    expect(log).toContain('aiming 4° right to stay on the line (the nose is that far off)');
-    // So the drone ends where the program says (50 forward, then 50 right), not ~3.5 cm to the side.
+    // The nose points 4° left of the line, so the move is sent angled 4° right of the nose...
+    const second = drone.moves[1]!;
+    expect((Math.atan2(second.y, second.x) * 180) / Math.PI).toBeCloseTo(-4, 0);
+    // ...and the drone ends where the program says (50 forward, then 50 right), not ~3.5 cm to the side.
     expect(drone.x).toBeCloseTo(0.5, 2);
     expect(drone.y).toBeCloseTo(-0.5, 2);
     expect((measurements.at(-1) as Extract<Measurement, { kind: 'end' }>).offCm).toBeLessThan(1);
@@ -184,6 +182,56 @@ describe('DroneRunner', () => {
     expect(runner.moveRatio).toBeLessThan(0.95);
   });
 
+  it('learns moves straight after a turn separately', async () => {
+    // Like Lesson 2 on hardware: ordinary moves fly the full distance, moves after a turn ~85 %.
+    drone.overshootDeg = 4;
+    drone.travelRatioAfterTurn = 0.85;
+    for (let flight = 0; flight < 4; flight++) {
+      drone.yaw = 0;
+      drone.x = 0;
+      drone.y = 0;
+      await settle(runner.run([cmd.takeoff, cmd.forward(50), cmd.turn('RIGHT', 90), cmd.forward(50), cmd.land]));
+    }
+    expect(runner.moveRatio).toBeCloseTo(1, 1);
+    expect(runner.moveRatioAfterTurn).toBeLessThan(0.92);
+    // So the last leg, which nothing comes after to correct, now gets close to its 50 cm.
+    const measurements: Measurement[] = [];
+    drone.yaw = 0;
+    drone.x = 0;
+    drone.y = 0;
+    await settle(runner.run([cmd.takeoff, cmd.forward(50), cmd.turn('RIGHT', 90), cmd.forward(50), cmd.land], { onMeasure: (m) => measurements.push(m) }));
+    const last = measurements.filter((m): m is Extract<Measurement, { kind: 'move' }> => m.kind === 'move').at(-1)!;
+    expect(last.afterTurn).toBe(true);
+    expect(last.movedCm).toBeGreaterThan(47);
+  });
+
+  it('aims each move at the planned point, absorbing drift while hovering', async () => {
+    drone.overshootDeg = 4;
+    const log: string[] = [];
+    const measurements: Measurement[] = [];
+    const run = runner.run([cmd.takeoff, cmd.hover(2), cmd.forward(50), cmd.land], { onLog: (m) => log.push(m), onMeasure: (m) => measurements.push(m) });
+    // Take-off and the start of the hover, then the drone drifts 6 cm right.
+    await vi.advanceTimersByTimeAsync(4300);
+    drone.y -= 0.06;
+    await settle(run);
+    expect(log).toContain('aiming at the planned point: 0 cm further, 6 cm left');
+    const end = measurements.find((m) => m.kind === 'end') as Extract<Measurement, { kind: 'end' }>;
+    expect(end.offCm).toBeLessThan(1);
+  });
+
+  it('caps the adjustment, so a bad position reading cannot send the drone far off', async () => {
+    drone.overshootDeg = 4;
+    const measurements: Measurement[] = [];
+    const run = runner.run([cmd.takeoff, cmd.hover(2), cmd.forward(50), cmd.land], { onMeasure: (m) => measurements.push(m) });
+    await vi.advanceTimersByTimeAsync(4300);
+    drone.y -= 0.3;
+    await settle(run);
+    const move = measurements.find((m) => m.kind === 'move') as Extract<Measurement, { kind: 'move' }>;
+    expect(move.adjustSideCm).toBe(10);
+    const end = measurements.find((m) => m.kind === 'end') as Extract<Measurement, { kind: 'end' }>;
+    expect(end.leftCm).toBeCloseTo(-20, 0);
+  });
+
   it('does not learn distances from an unusual move', async () => {
     drone.travelRatio = 0.3;
     const log: string[] = [];
@@ -219,9 +267,9 @@ describe('DroneRunner', () => {
 
   it('starts from a saved calibration and reports what it has learned', async () => {
     runner.dispose();
-    runner = new DroneRunner(drone, { overshootDeg: 6, moveRatio: 0.9 });
+    runner = new DroneRunner(drone, { overshootDeg: 6, moveRatio: 0.9, moveRatioAfterTurn: 0.85 });
     await vi.advanceTimersByTimeAsync(300);
-    expect(runner.calibration).toEqual({ overshootDeg: 6, moveRatio: 0.9 });
+    expect(runner.calibration).toEqual({ overshootDeg: 6, moveRatio: 0.9, moveRatioAfterTurn: 0.85 });
     await settle(runner.run([cmd.takeoff, cmd.forward(45), cmd.land]));
     // 45 cm / 0.9 = 50 cm sent.
     expect(drone.events).toContain('MOVE 0.50,0.00');

@@ -14,7 +14,9 @@ export function loadCalibration(): Calibration {
   try {
     const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? 'null') as Partial<Calibration> | null;
     if (saved && inRange(saved.overshootDeg, 0, 15) && inRange(saved.moveRatio, 0.5, 1.5)) {
-      return { overshootDeg: saved.overshootDeg, moveRatio: saved.moveRatio };
+      // Calibrations saved before after-turn moves were learned separately start from the one ratio.
+      const afterTurn = inRange(saved.moveRatioAfterTurn, 0.5, 1.5) ? saved.moveRatioAfterTurn : saved.moveRatio;
+      return { overshootDeg: saved.overshootDeg, moveRatio: saved.moveRatio, moveRatioAfterTurn: afterTurn };
     }
   } catch {
     // Blocked storage or a damaged value: start from the defaults.

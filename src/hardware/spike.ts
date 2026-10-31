@@ -110,7 +110,8 @@ function summarise(flights: FlightRecord[]) {
   const moves = all.filter((m): m is Extract<Measurement, { kind: 'move' }> => m.kind === 'move');
   const turns = all.filter((m): m is Extract<Measurement, { kind: 'turn' }> => m.kind === 'turn');
   const ends = all.filter((m): m is Extract<Measurement, { kind: 'end' }> => m.kind === 'end');
-  const movePct = moves.map((m) => (100 * m.movedCm) / m.askedCm);
+  // How much of each move's target it flew (older saved results have no target: use what was asked).
+  const movePct = moves.map((m) => (100 * m.movedCm) / (m.targetCm ?? m.askedCm));
   // Older saved results have no path samples.
   const side = moves.map((m) => m.maxSideCm).filter((v): v is number => typeof v === 'number');
   const turnErr = turns.map((t) => t.turnedDeg - t.askedDeg);
@@ -133,7 +134,9 @@ function summarise(flights: FlightRecord[]) {
 
 function renderResults() {
   const c = runner?.calibration ?? loadCalibration();
-  ui.calibration.textContent = `Calibration now: turns aim ${c.overshootDeg.toFixed(1)}° short, distance ratio ${c.moveRatio.toFixed(2)}`;
+  ui.calibration.textContent =
+    `Calibration now: turns aim ${c.overshootDeg.toFixed(1)}° short; distance ratio ${c.moveRatio.toFixed(2)}, ` +
+    `after a turn ${c.moveRatioAfterTurn.toFixed(2)}`;
   if (results.length === 0) {
     ui.results.innerHTML = '<p class="hint">No flights yet.</p>';
     return;
@@ -153,7 +156,7 @@ function renderResults() {
     );
   };
   ui.results.innerHTML =
-    '<table><thead><tr><th>Program</th><th>Completed</th><th>Moves: distance flown vs asked</th><th>Straightness: max off the line</th>' +
+    '<table><thead><tr><th>Program</th><th>Completed</th><th>Moves: distance flown vs target</th><th>Straightness: max off the line</th>' +
     '<th>Turns: error</th><th>Off course after turns</th><th>End point: off target</th></tr></thead><tbody>' +
     names.map((n) => row(n, results.filter((r) => r.name === n))).join('') +
     row('<b>All flights</b>', results) +
@@ -163,11 +166,14 @@ function renderResults() {
 /** A compact text summary to paste back for review. */
 function resultsText(): string {
   const c = runner?.calibration ?? loadCalibration();
-  const lines = [`Calibration now: overshoot ${c.overshootDeg.toFixed(1)}°, distance ratio ${c.moveRatio.toFixed(3)}`, ''];
+  const lines = [
+    `Calibration now: overshoot ${c.overshootDeg.toFixed(1)}°, distance ratio ${c.moveRatio.toFixed(3)}, after a turn ${c.moveRatioAfterTurn.toFixed(3)}`,
+    '',
+  ];
   for (const name of [...new Set(results.map((r) => r.name))]) {
     const s = summarise(results.filter((r) => r.name === name));
     lines.push(
-      `${name}: ${s.completed}/${s.flights} completed; moves ${r0(s.moveAvgPct)}% of asked (worst ${r0(s.moveWorstPct)}%); ` +
+      `${name}: ${s.completed}/${s.flights} completed; moves ${r0(s.moveAvgPct)}% of target (worst ${r0(s.moveWorstPct)}%); ` +
         `max off the line ${r0(s.sideAvg)} cm (worst ${r0(s.sideWorst)} cm); ` +
         `turn error ${r1(s.turnAvgErr)}° (worst ${r0(s.turnWorstErr)}°); off course ${r1(s.courseAvgErr)}°; ` +
         `end point ${r0(s.endAvg)} cm off (worst ${r0(s.endWorst)} cm)`,
@@ -177,8 +183,10 @@ function resultsText(): string {
   for (const f of results) {
     const parts = f.measurements.map((m) =>
       m.kind === 'move'
-        ? `mv ${r0(m.movedCm)}/${m.askedCm}${m.offDeg !== null ? `@${r0(m.offDeg)}°` : ''}` +
-          `${typeof m.maxSideCm === 'number' ? ` side ${r0(m.maxSideCm)}` : ''}${m.correctionDeg ? ` aim ${r0(m.correctionDeg)}°` : ''}`
+        ? `mv ${r0(m.movedCm)}/${m.askedCm}${m.targetCm !== undefined && Math.round(m.targetCm) !== m.askedCm ? ` tgt ${r0(m.targetCm)}` : ''}` +
+          `${m.afterTurn ? ' (after turn)' : ''}${m.offDeg !== null ? `@${r0(m.offDeg)}°` : ''}` +
+          `${typeof m.maxSideCm === 'number' ? ` side ${r0(m.maxSideCm)}` : ''}` +
+          `${m.adjustAlongCm || m.adjustSideCm ? ` adj ${r0(m.adjustAlongCm)}/${r0(m.adjustSideCm)}` : ''}`
         : m.kind === 'turn'
           ? `tn ${r0(m.turnedDeg)}/${m.askedDeg} crs ${r0(m.courseErrorDeg)}°`
           : `end ${r0(m.offCm)}cm (fwd ${r0(m.forwardCm)}, left ${r0(m.leftCm)})`,
@@ -229,7 +237,10 @@ async function fly(name: string, commands: () => readonly DroneCommand[]) {
     return;
   }
   runner.turnMethod = ui.headingTurns.checked ? 'drone-heading' : 'yaw-loop';
-  log(`▶ ${name} (turns: ${runner.turnMethod}, learned overshoot ${runner.overshootDeg.toFixed(1)}°, distance ratio ${runner.moveRatio.toFixed(2)})`);
+  log(
+    `▶ ${name} (turns: ${runner.turnMethod}, learned overshoot ${runner.overshootDeg.toFixed(1)}°, ` +
+      `distance ratio ${runner.moveRatio.toFixed(2)}, after a turn ${runner.moveRatioAfterTurn.toFixed(2)})`,
+  );
   const started = Date.now();
   const calibration = runner.calibration;
   const measurements: Measurement[] = [];
@@ -330,6 +341,7 @@ ui.resetCalibration.onclick = () => {
     const fresh = loadCalibration();
     runner.overshootDeg = fresh.overshootDeg;
     runner.moveRatio = fresh.moveRatio;
+    runner.moveRatioAfterTurn = fresh.moveRatioAfterTurn;
   }
   log('calibration reset to defaults');
   renderResults();

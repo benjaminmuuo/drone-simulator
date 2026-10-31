@@ -10,10 +10,15 @@ describe('calibration store', () => {
   });
 
   it('remembers what the drone learned, and forgets it on reset', () => {
-    saveCalibration({ overshootDeg: 5.5, moveRatio: 0.93 });
-    expect(loadCalibration()).toEqual({ overshootDeg: 5.5, moveRatio: 0.93 });
+    saveCalibration({ overshootDeg: 5.5, moveRatio: 0.93, moveRatioAfterTurn: 0.88 });
+    expect(loadCalibration()).toEqual({ overshootDeg: 5.5, moveRatio: 0.93, moveRatioAfterTurn: 0.88 });
     clearCalibration();
     expect(loadCalibration()).toEqual(DEFAULT_CALIBRATION);
+  });
+
+  it('loads a calibration saved before after-turn moves were learned separately', () => {
+    window.localStorage.setItem('birds.droneCalibration.v1', JSON.stringify({ overshootDeg: 3.3, moveRatio: 0.917 }));
+    expect(loadCalibration()).toEqual({ overshootDeg: 3.3, moveRatio: 0.917, moveRatioAfterTurn: 0.917 });
   });
 
   it('ignores damaged or out-of-range values', () => {

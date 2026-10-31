@@ -32,6 +32,9 @@ export class FakeDrone implements DroneLink {
   settleMs = 800;
   /** Share of each requested move actually travelled (the real drone stops a little short). */
   travelRatio = 1;
+  /** Share travelled by the first move after a turn (the real drone fell shorter there); defaults to travelRatio. */
+  travelRatioAfterTurn: number | null = null;
+  private turnedSinceMove = false;
   /** Sideways bulge in the middle of every move (cm), to test path measurements. */
   wobbleCm = 0;
   /** The move in progress: the drone's position is interpolated along it (plus the wobble). */
@@ -148,6 +151,7 @@ export class FakeDrone implements DroneLink {
       if (heading !== 0) {
         // The drone turns itself (left +) at `rate` °/s.
         this.turns.push(heading);
+        this.turnedSinceMove = true;
         this.events.push(`TURN ${heading}`);
         this.movement = MOVEMENT.Moving;
         this.later((Math.abs(heading) / rate) * 1000, () => {
@@ -157,11 +161,14 @@ export class FakeDrone implements DroneLink {
         return;
       }
       this.moves.push(move);
-      this.events.push(`MOVE ${move.x.toFixed(2)},${move.y.toFixed(2)}`);
+      // Rounding noise from rotating the move into the drone's frame shouldn't print as "-0.00".
+      const cm2 = (v: number) => (Math.abs(v) < 0.005 ? 0 : v).toFixed(2);
+      this.events.push(`MOVE ${cm2(move.x)},${cm2(move.y)}`);
       this.movement = MOVEMENT.Moving;
       // The move is relative to the heading (yaw: left +).
       const r = (this.yaw * Math.PI) / 180;
-      const k = this.travelRatio;
+      const k = this.turnedSinceMove ? (this.travelRatioAfterTurn ?? this.travelRatio) : this.travelRatio;
+      this.turnedSinceMove = false;
       const ms = (Math.hypot(move.x, move.y) / v) * 1000;
       this.inFlight = {
         from: { x: this.x, y: this.y },
@@ -180,6 +187,7 @@ export class FakeDrone implements DroneLink {
     } else if (p.dataType === DataType.Control && d.length === 4) {
       const power = ((d[2] as number) << 24) >> 24;
       if (power !== 0) {
+        this.turnedSinceMove = true;
         clearTimeout(this.settleTimer);
         this.movement = MOVEMENT.Moving;
       } else if (this.yawPower !== 0) {
