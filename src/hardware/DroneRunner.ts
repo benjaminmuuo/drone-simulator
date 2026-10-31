@@ -91,11 +91,19 @@ const OVERSHOOT_SAMPLE_RANGE = { min: -5, max: 12 } as const;
 /** How fast the estimate follows each new measurement (0–1). */
 const OVERSHOOT_LEARNING_RATE = 0.25;
 /**
- * Heading replies sometimes stop for a few hundred ms (seen on hardware: 2 turns in ~18).
- * While the drone is still, waiting is safe; mid-turn, wait this long before stopping the
- * rotation, then wait up to HEADING_TIMEOUT_MS more.
+ * Replies sometimes stop for a few hundred ms (seen on hardware: heading replies in 2 turns of
+ * ~18, position replies at the end of a flight). While the drone is still, waiting is safe, so
+ * heading and position readings wait this long; mid-turn, a late heading stops the rotation first.
  */
 const HEADING_TIMEOUT_MS = 1200;
+/**
+ * The link can drop out briefly (seen on hardware: failures while landing, and one flight
+ * refused at the start). Landing keeps sending "land" for up to this long, waiting for the
+ * drone to confirm, instead of failing after 1.5 s without a reply.
+ */
+const LAND_CONFIRM_MS = 10_000;
+/** Before refusing to start because the drone isn't answering, wait this long for it to reply. */
+const START_CONTACT_MS = 2000;
 const TURN_READING_MS = 200;
 const LOW_BATTERY_MS = 3000;
 /**
@@ -287,6 +295,8 @@ export class DroneRunner {
 
   async run(commands: readonly DroneCommand[], events: RunEvents = {}): Promise<RunOutcome> {
     if (this.running) throw new Error('A flight is already running');
+    // A brief gap in replies shouldn't stop a flight before it starts.
+    for (const until = Date.now() + START_CONTACT_MS; !this.isAnswering && Date.now() < until; ) await sleep(100);
     const problems = this.preflight(commands);
     if (problems.length > 0) return { status: 'FAILED', message: problems.join(' '), commandIndex: null };
 
@@ -492,15 +502,44 @@ export class DroneRunner {
 
   /** `force`: also used to stop a flight, so it ignores cancellation. */
   private async land(force: boolean) {
-    const send = (b: Uint8Array) => (force ? this.link.send(b) : this.send(b));
-    await send(controlPacket(0, 0, 0, 0));
+    if (!force) {
+      // A normal landing tolerates short dropouts (see confirmLanding), so it doesn't use wait().
+      if (this.cancel) throw new Cancelled();
+      await this.link.send(controlPacket(0, 0, 0, 0)).catch(() => {});
+      return this.confirmLanding();
+    }
+    await this.link.send(controlPacket(0, 0, 0, 0)).catch(() => {});
     const deadline = Date.now() + 4000;
     while (Date.now() < deadline && !['Landing', 'Ready'].includes(this.status?.flight ?? '')) {
-      await send(landingPacket());
-      await (force ? sleep(100) : this.wait(100));
+      await this.link.send(landingPacket()).catch(() => {});
+      await sleep(100);
     }
-    if (force) return;
-    if (!(await this.waitForFlight(['Ready'], 8000))) throw new FlightError('The drone did not report that it landed.');
+  }
+
+  /**
+   * Waits for the drone to report it has landed, riding out short dropouts: it keeps sending
+   * "land" while the drone hasn't confirmed, and only gives up after LAND_CONFIRM_MS.
+   */
+  private async confirmLanding() {
+    const deadline = Date.now() + LAND_CONFIRM_MS;
+    let lastSent = 0;
+    while (Date.now() < deadline) {
+      if (this.cancel) throw new Cancelled();
+      const flight = this.isAnswering ? this.status?.flight : undefined;
+      if (flight === 'Ready') return;
+      if (flight === 'Accident' || flight === 'Error' || flight === 'Stop') throw new FlightError(`The drone reported “${flight}” while landing.`);
+      // Not answering, or not landing yet: (re)send "land" now and then.
+      if (flight !== 'Landing' && Date.now() - lastSent > 300) {
+        await this.link.send(landingPacket()).catch(() => {});
+        lastSent = Date.now();
+      }
+      await sleep(100);
+    }
+    throw new FlightError(
+      this.isAnswering
+        ? 'The drone did not report that it landed.'
+        : 'Lost contact with the drone while it was landing. Check that it is down before flying again.',
+    );
   }
 
   /**
@@ -769,9 +808,9 @@ export class DroneRunner {
     return state;
   }
 
-  /** Position is only used to report distances, so a missing reading is not an error. */
+  /** Position is only used to report and aim, so a missing reading is not an error. Read while the drone is still. */
   private async freshPosition() {
-    const payload = await this.fresh(DataType.Position, requestPositionPacket);
+    const payload = await this.fresh(DataType.Position, requestPositionPacket, HEADING_TIMEOUT_MS);
     return payload && parsePosition(payload);
   }
 

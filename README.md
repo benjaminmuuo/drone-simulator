@@ -88,6 +88,10 @@ to the CoDrone EDU controller over USB directly, like Robolink Blockly does.
    - **STOP**, or the **Space** key, cuts the motors at once.
    - The drone also lands by itself if a step times out, the drone stops answering, the battery
      reads below 15% for 3 seconds, or the tab is hidden or closed.
+   - Short radio dropouts are ridden out where it's safe: a flight waits up to 2 s for the drone
+     to answer before refusing to start; landing keeps sending "land" for up to 10 s, waiting for
+     the drone to confirm; position and heading readings taken while the drone is still wait up to
+     1.2 s. A dropout mid-flight still stops the flight after 1.5 s.
 
 **Code** (`src/hardware/`):
 

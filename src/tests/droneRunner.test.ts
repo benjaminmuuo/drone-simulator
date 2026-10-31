@@ -399,6 +399,38 @@ describe('DroneRunner', () => {
     expect(drone.events).toEqual(['TAKEOFF', 'LAND']);
   });
 
+  /** Advances fake time until `done()` (or gives up after `maxMs`). */
+  async function until(done: () => boolean, maxMs = 30_000) {
+    for (let t = 0; !done() && t < maxMs; t += 50) await vi.advanceTimersByTimeAsync(50);
+  }
+
+  it('rides out a short dropout while landing', async () => {
+    const run = runner.run([cmd.takeoff, cmd.land]);
+    await until(() => drone.events.includes('LAND'));
+    // The link drops for 3 s just as the drone starts landing (the drone still lands).
+    drone.silent = true;
+    await vi.advanceTimersByTimeAsync(3000);
+    drone.silent = false;
+    expect(await settle(run)).toEqual({ status: 'COMPLETED' });
+  });
+
+  it('reports a landing it could not confirm after 10 s without replies', async () => {
+    const run = runner.run([cmd.takeoff, cmd.land]);
+    await until(() => drone.events.includes('LAND'));
+    drone.silent = true;
+    const outcome = await settle(run);
+    expect(outcome).toMatchObject({ status: 'FAILED', commandIndex: 1, message: expect.stringMatching(/Lost contact .* while it was landing/) });
+  });
+
+  it('waits for a brief gap in replies before refusing to start', async () => {
+    drone.silent = true;
+    await vi.advanceTimersByTimeAsync(2000);
+    const run = runner.run([cmd.takeoff, cmd.land]);
+    await vi.advanceTimersByTimeAsync(800);
+    drone.silent = false;
+    expect(await settle(run)).toEqual({ status: 'COMPLETED' });
+  });
+
   it('fails without landing commands when the link goes silent', async () => {
     const run = runner.run([cmd.takeoff, cmd.hover(30), cmd.land]);
     await vi.advanceTimersByTimeAsync(5000);

@@ -74,6 +74,8 @@ interface FlightRecord {
   readonly name: string;
   readonly at: string;
   readonly outcome: string;
+  /** Why it failed, when it did. */
+  readonly message?: string;
   readonly calibration: Calibration;
   readonly measurements: Measurement[];
 }
@@ -192,7 +194,8 @@ function resultsText(): string {
           : `end ${r0(m.offCm)}cm (fwd ${r0(m.forwardCm)}, left ${r0(m.leftCm)})`,
     );
     lines.push(
-      `${f.at} ${f.name} [${f.outcome}; cal ${f.calibration.overshootDeg.toFixed(1)}°/${f.calibration.moveRatio.toFixed(3)}]: ${parts.join('; ')}`,
+      `${f.at} ${f.name} [${f.outcome}; cal ${f.calibration.overshootDeg.toFixed(1)}°/${f.calibration.moveRatio.toFixed(3)}]: ${parts.join('; ')}` +
+        (f.message ? ` ✗ ${f.message}` : ''),
     );
   }
   return lines.join('\n');
@@ -252,7 +255,14 @@ async function fly(name: string, commands: () => readonly DroneCommand[]) {
   render();
   const outcome = await run;
   saveCalibration(runner.calibration);
-  results.push({ name, at: new Date().toTimeString().slice(0, 8), outcome: outcome.status.toLowerCase(), calibration, measurements });
+  results.push({
+    name,
+    at: new Date().toTimeString().slice(0, 8),
+    outcome: outcome.status.toLowerCase(),
+    ...(outcome.status === 'FAILED' ? { message: outcome.message } : {}),
+    calibration,
+    measurements,
+  });
   saveResults();
   renderResults();
   const secs = ((Date.now() - started) / 1000).toFixed(1);
