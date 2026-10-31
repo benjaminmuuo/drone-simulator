@@ -111,6 +111,8 @@ function summarise(flights: FlightRecord[]) {
   const turns = all.filter((m): m is Extract<Measurement, { kind: 'turn' }> => m.kind === 'turn');
   const ends = all.filter((m): m is Extract<Measurement, { kind: 'end' }> => m.kind === 'end');
   const movePct = moves.map((m) => (100 * m.movedCm) / m.askedCm);
+  // Older saved results have no path samples.
+  const side = moves.map((m) => m.maxSideCm).filter((v): v is number => typeof v === 'number');
   const turnErr = turns.map((t) => t.turnedDeg - t.askedDeg);
   return {
     flights: flights.length,
@@ -118,6 +120,8 @@ function summarise(flights: FlightRecord[]) {
     moves: moves.length,
     moveAvgPct: avg(movePct),
     moveWorstPct: movePct.length ? movePct.reduce((w, p) => (Math.abs(p - 100) > Math.abs(w - 100) ? p : w)) : NaN,
+    sideAvg: avg(side),
+    sideWorst: side.length ? Math.max(...side) : NaN,
     turns: turns.length,
     turnAvgErr: avg(turnErr),
     turnWorstErr: turnErr.length ? Math.max(...turnErr.map(Math.abs)) : NaN,
@@ -141,6 +145,7 @@ function renderResults() {
     return (
       `<tr>${td(label)}${td(`${s.completed}/${s.flights}`)}` +
       td(s.moves ? `${r0(s.moveAvgPct)}% (worst ${r0(s.moveWorstPct)}%)` : '–', tone(Math.abs(s.moveWorstPct - 100), 10, 20)) +
+      td(Number.isFinite(s.sideAvg) ? `${r0(s.sideAvg)} cm (worst ${r0(s.sideWorst)} cm)` : '–', tone(s.sideWorst, 5, 10)) +
       td(s.turns ? `${s.turnAvgErr >= 0 ? '+' : ''}${r1(s.turnAvgErr)}° (worst ${r0(s.turnWorstErr)}°)` : '–', tone(s.turnWorstErr, 3, 6)) +
       td(s.turns ? `${r1(s.courseAvgErr)}°` : '–', tone(s.courseAvgErr, 2, 5)) +
       td(Number.isFinite(s.endAvg) ? `${r0(s.endAvg)} cm (worst ${r0(s.endWorst)} cm)` : '–', tone(s.endWorst, 10, 20)) +
@@ -148,7 +153,7 @@ function renderResults() {
     );
   };
   ui.results.innerHTML =
-    '<table><thead><tr><th>Program</th><th>Completed</th><th>Moves: distance flown vs asked</th>' +
+    '<table><thead><tr><th>Program</th><th>Completed</th><th>Moves: distance flown vs asked</th><th>Straightness: max off the line</th>' +
     '<th>Turns: error</th><th>Off course after turns</th><th>End point: off target</th></tr></thead><tbody>' +
     names.map((n) => row(n, results.filter((r) => r.name === n))).join('') +
     row('<b>All flights</b>', results) +
@@ -163,6 +168,7 @@ function resultsText(): string {
     const s = summarise(results.filter((r) => r.name === name));
     lines.push(
       `${name}: ${s.completed}/${s.flights} completed; moves ${r0(s.moveAvgPct)}% of asked (worst ${r0(s.moveWorstPct)}%); ` +
+        `max off the line ${r0(s.sideAvg)} cm (worst ${r0(s.sideWorst)} cm); ` +
         `turn error ${r1(s.turnAvgErr)}° (worst ${r0(s.turnWorstErr)}°); off course ${r1(s.courseAvgErr)}°; ` +
         `end point ${r0(s.endAvg)} cm off (worst ${r0(s.endWorst)} cm)`,
     );
@@ -171,7 +177,8 @@ function resultsText(): string {
   for (const f of results) {
     const parts = f.measurements.map((m) =>
       m.kind === 'move'
-        ? `mv ${r0(m.movedCm)}/${m.askedCm}${m.offDeg !== null ? `@${r0(m.offDeg)}°` : ''}`
+        ? `mv ${r0(m.movedCm)}/${m.askedCm}${m.offDeg !== null ? `@${r0(m.offDeg)}°` : ''}` +
+          `${typeof m.maxSideCm === 'number' ? ` side ${r0(m.maxSideCm)}` : ''}${m.correctionDeg ? ` aim ${r0(m.correctionDeg)}°` : ''}`
         : m.kind === 'turn'
           ? `tn ${r0(m.turnedDeg)}/${m.askedDeg} crs ${r0(m.courseErrorDeg)}°`
           : `end ${r0(m.offCm)}cm (fwd ${r0(m.forwardCm)}, left ${r0(m.leftCm)})`,

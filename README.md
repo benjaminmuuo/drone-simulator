@@ -128,6 +128,13 @@ It's saved per browser, not per drone: use **Reset calibration** on the test pag
 drones. Before each landing, the runner also measures how far the drone is from where the program
 says it should be (the **end point**). That's the overall accuracy number for a flight.
 
+**Straight lines.** Moves are sent relative to the drone's nose. So if a turn leaves the nose a few
+degrees off the planned heading, the next move is angled by that much (up to 15°) to follow the
+planned line instead. The log says so, for example `aiming 3° right to stay on the line`. During
+each move the runner samples the drone's position every ~100 ms and reports the largest sideways
+distance from the line (`at most 2 cm off the line`). Every 4th sample is a status request
+instead, so the safety checks keep running.
+
 **Hardware test page.** `npm run dev`, then open `/spike/hardware.html`. **Flight School calibration**
 has a button for each lesson. Fly each one several times, putting the drone back on the start mark
 in between. The **Results** table summarises every flight: moves (distance flown vs asked), turn

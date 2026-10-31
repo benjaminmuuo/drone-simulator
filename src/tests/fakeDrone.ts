@@ -32,6 +32,10 @@ export class FakeDrone implements DroneLink {
   settleMs = 800;
   /** Share of each requested move actually travelled (the real drone stops a little short). */
   travelRatio = 1;
+  /** Sideways bulge in the middle of every move (cm), to test path measurements. */
+  wobbleCm = 0;
+  /** The move in progress: the drone's position is interpolated along it (plus the wobble). */
+  private inFlight: { from: { x: number; y: number }; dx: number; dy: number; startAt: number; ms: number } | null = null;
   /** Extra rotation at the end of a turn, either method (as seen on hardware). */
   overshootDeg = 0;
   readonly turns: number[] = [];
@@ -77,6 +81,16 @@ export class FakeDrone implements DroneLink {
     });
   }
 
+  /** Current position: along the move in progress, bulging sideways by `wobbleCm` at its middle. */
+  private where(): { x: number; y: number } {
+    const f = this.inFlight;
+    if (!f) return { x: this.x, y: this.y };
+    const t = Math.min(1, (Date.now() - f.startAt) / f.ms);
+    const len = Math.hypot(f.dx, f.dy) || 1;
+    const bulge = (this.wobbleCm / 100) * Math.sin(Math.PI * t);
+    return { x: f.from.x + f.dx * t - (f.dy / len) * bulge, y: f.from.y + f.dy * t + (f.dx / len) * bulge };
+  }
+
   private receive(p: Packet) {
     if (p.dataType === DataType.Request) this.request(p.payload[0] as number);
     else this.command(p);
@@ -87,8 +101,9 @@ export class FakeDrone implements DroneLink {
       this.reply(DataType.State, [0x12, this.flight, 0x11, this.movement, 0x02, 0x02, 0x01, this.battery]);
     } else if (type === DataType.Position) {
       const view = new DataView(new ArrayBuffer(12));
-      view.setFloat32(0, this.x, true);
-      view.setFloat32(4, this.y, true);
+      const at = this.where();
+      view.setFloat32(0, at.x, true);
+      view.setFloat32(4, at.y, true);
       this.reply(DataType.Position, Array.from(new Uint8Array(view.buffer)));
     } else if (type === DataType.Motion) {
       // Integrate the yaw command since the last request (≈ power × 1.5 °/s per unit).
@@ -144,12 +159,22 @@ export class FakeDrone implements DroneLink {
       this.moves.push(move);
       this.events.push(`MOVE ${move.x.toFixed(2)},${move.y.toFixed(2)}`);
       this.movement = MOVEMENT.Moving;
-      this.later((Math.hypot(move.x, move.y) / v) * 1000, () => {
-        // The move is relative to the heading (yaw: left +).
-        const r = (this.yaw * Math.PI) / 180;
-        const k = this.travelRatio;
-        this.x += k * (move.x * Math.cos(r) - move.y * Math.sin(r));
-        this.y += k * (move.x * Math.sin(r) + move.y * Math.cos(r));
+      // The move is relative to the heading (yaw: left +).
+      const r = (this.yaw * Math.PI) / 180;
+      const k = this.travelRatio;
+      const ms = (Math.hypot(move.x, move.y) / v) * 1000;
+      this.inFlight = {
+        from: { x: this.x, y: this.y },
+        dx: k * (move.x * Math.cos(r) - move.y * Math.sin(r)),
+        dy: k * (move.x * Math.sin(r) + move.y * Math.cos(r)),
+        startAt: Date.now(),
+        ms,
+      };
+      this.later(ms, () => {
+        const f = this.inFlight!;
+        this.x = f.from.x + f.dx;
+        this.y = f.from.y + f.dy;
+        this.inFlight = null;
         this.movement = MOVEMENT.Hovering;
       });
     } else if (p.dataType === DataType.Control && d.length === 4) {

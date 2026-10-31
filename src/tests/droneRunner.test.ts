@@ -54,6 +54,8 @@ afterEach(() => {
 
 describe('DroneRunner', () => {
   it('flies the reference U-turn program in order and lands', async () => {
+    // Turns overshoot by the 4° the runner expects, so moves need no correction.
+    drone.overshootDeg = 4;
     const steps: number[] = [];
     const outcome = await settle(runner.run(parse(UTURN_XML), { onStep: (i) => steps.push(i) }));
 
@@ -68,29 +70,59 @@ describe('DroneRunner', () => {
   });
 
   it('waits for the drone to steady after a turn, so the next move is not skipped', async () => {
+    drone.overshootDeg = 4;
     const log: string[] = [];
     await settle(runner.run(parse(UTURN_XML), { onLog: (m) => log.push(m) }));
     // 50 forward, turn right, 10 forward, turn right, 50 forward: a U-turn 10 cm to the right.
     expect(drone.moves).toHaveLength(3);
     expect(drone.x).toBeCloseTo(0, 1);
     expect(Math.abs(drone.y)).toBeGreaterThan(0.05);
-    expect(log.filter((m) => m.startsWith('moved')).map((m) => m.replace(/, \d+° (left|right) of/, ', N° of'))).toEqual([
-      'moved 50 cm (asked 50 cm), N° of the expected direction',
-      'moved 10 cm (asked 10 cm), N° of the expected direction',
-      'moved 50 cm (asked 50 cm), N° of the expected direction',
-    ]);
-    // Moves follow the nose, so every direction error is small.
-    for (const m of log.filter((l) => l.startsWith('moved'))) expect(Number(/(\d+)°/.exec(m)![1])).toBeLessThan(15);
+    const moved = log.filter((m) => m.startsWith('moved'));
+    expect(moved.map((m) => Number(/^moved (\d+) cm/.exec(m)![1]))).toEqual([50, 10, 50]);
+    for (const m of moved) {
+      expect(m).toMatch(/\(asked \d+ cm\), \d+° (left|right) of the line, at most \d+ cm off the line$/);
+      expect(Number(/(\d+)°/.exec(m)![1])).toBeLessThan(15);
+    }
+  });
+
+  it('angles a move to stay on the planned line when the nose is a few degrees off', async () => {
+    // No overshoot, but the runner expects 4°: the turn stops 4° short, leaving the nose 4° off course.
+    const measurements: Measurement[] = [];
+    const log: string[] = [];
+    await settle(
+      runner.run([cmd.takeoff, cmd.forward(50), cmd.turn('RIGHT', 90), cmd.forward(50), cmd.land], {
+        onMeasure: (m) => measurements.push(m),
+        onLog: (m) => log.push(m),
+      }),
+    );
+    const moves = measurements.filter((m): m is Extract<Measurement, { kind: 'move' }> => m.kind === 'move');
+    expect(moves[0]!.correctionDeg).toBe(0);
+    // The nose points 4° left of the line, so the move aims 4° right.
+    expect(moves[1]!.correctionDeg).toBeCloseTo(-4, 0);
+    expect(log).toContain('aiming 4° right to stay on the line (the nose is that far off)');
+    // So the drone ends where the program says (50 forward, then 50 right), not ~3.5 cm to the side.
+    expect(drone.x).toBeCloseTo(0.5, 2);
+    expect(drone.y).toBeCloseTo(-0.5, 2);
+    expect((measurements.at(-1) as Extract<Measurement, { kind: 'end' }>).offCm).toBeLessThan(1);
+  });
+
+  it('measures how far a move strays sideways from the line on the way', async () => {
+    drone.overshootDeg = 4;
+    drone.wobbleCm = 6;
+    const measurements: Measurement[] = [];
+    await settle(runner.run([cmd.takeoff, cmd.forward(50), cmd.land], { onMeasure: (m) => measurements.push(m) }));
+    const move = measurements.find((m) => m.kind === 'move') as Extract<Measurement, { kind: 'move' }>;
+    // It ends on the line, but bulged ~6 cm out in the middle.
+    expect(Math.abs(move.offDeg!)).toBeLessThan(1);
+    expect(move.maxSideCm).toBeGreaterThan(4.5);
+    expect(move.maxSideCm).toBeLessThan(6.5);
   });
 
   it('warns when a move falls short', async () => {
     const log: string[] = [];
-    drone.settleMs = 0;
-    const run = runner.run([cmd.takeoff, cmd.forward(50), cmd.land], { onLog: (m) => log.push(m) });
-    // Knock the drone back mid-move (as if it hit something soft).
-    await vi.advanceTimersByTimeAsync(4500);
-    drone.x -= 0.4;
-    await settle(run);
+    // The drone covers only 40 % of the move (as if it hit something soft).
+    drone.travelRatio = 0.4;
+    await settle(runner.run([cmd.takeoff, cmd.forward(50), cmd.land], { onLog: (m) => log.push(m) }));
     expect(log).toContainEqual(expect.stringMatching(/^⚠ moved \d+ cm \(asked 50 cm\)/));
   });
 

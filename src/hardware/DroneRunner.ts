@@ -104,6 +104,10 @@ const LOW_BATTERY_MS = 3000;
  * It starts at 1 (no assumption) and learns from moves of at least MIN_LEARN_MOVE_CM.
  */
 const MIN_LEARN_MOVE_CM = 20;
+/** The drone's heading is corrected for when aiming a move, up to this much; more means something else is wrong. */
+const MAX_MOVE_CORRECTION_DEG = 15;
+/** Position samples during a move; every 4th request is a State poll instead, so the safety checks keep working. */
+const PATH_SAMPLE_MS = 100;
 const MOVE_RATIO_LIMITS = { min: 0.75, max: 1.1 } as const;
 /** Samples outside this range (a bump, a drift) are not learned from. */
 const MOVE_SAMPLE_RANGE = { min: 0.5, max: 1.3 } as const;
@@ -127,7 +131,18 @@ export interface Calibration {
 
 /** One measurement from a real flight, for calibration reports. */
 export type Measurement =
-  | { readonly kind: 'move'; readonly askedCm: number; readonly sentCm: number; readonly movedCm: number; readonly offDeg: number | null }
+  | {
+      readonly kind: 'move';
+      readonly askedCm: number;
+      readonly sentCm: number;
+      readonly movedCm: number;
+      /** Direction flown vs the planned line (left +). */
+      readonly offDeg: number | null;
+      /** Largest sideways distance from the planned line during the move. */
+      readonly maxSideCm: number | null;
+      /** How much the move was angled to make up for the drone's heading error (left +). */
+      readonly correctionDeg: number;
+    }
   | { readonly kind: 'turn'; readonly askedDeg: number; readonly turnedDeg: number; readonly courseErrorDeg: number }
   /**
    * Where the drone ended, compared with where the program says it should be, just before landing.
@@ -152,7 +167,10 @@ interface Report {
 /** How far a move really went, and how far its direction was from the intended one (left +). */
 interface MoveReport {
   readonly cm: number;
+  /** Direction flown vs the line the program means (left +). */
   readonly offDeg: number | null;
+  /** Largest sideways distance from that line during the move (cm), from position samples. */
+  readonly maxSideCm: number | null;
 }
 
 class FlightError extends Error {}
@@ -197,6 +215,8 @@ export class DroneRunner {
    * should face, from take-off on. Null when the position couldn't be read at take-off.
    */
   private plan: { x: number; y: number; headingDeg: number } | null = null;
+  /** Position samples (metres) collected while a move is tracked; null otherwise. */
+  private pathSamples: { x: number; y: number }[] | null = null;
 
   constructor(
     private readonly link: DroneLink,
@@ -318,23 +338,27 @@ export class DroneRunner {
         log(`→ ${command.direction.toLowerCase()} ${command.distanceCm} cm`);
         // Ask for a little more, by the shortfall learned so far.
         const sentCm = command.distanceCm / this.moveRatio;
-        const m = sentCm / 100;
-        const axes: Record<typeof command.direction, readonly [number, number]> = {
-          FORWARD: [m, 0],
-          BACKWARD: [-m, 0],
-          LEFT: [0, m],
-          RIGHT: [0, -m],
-        };
-        const [x, y] = axes[command.direction];
+        const bearings: Record<typeof command.direction, number> = { FORWARD: 0, BACKWARD: 180, LEFT: 90, RIGHT: -90 };
+        // The line the program means, in the take-off frame (before this move updates the plan).
+        const lineDeg = this.plan ? this.plan.headingDeg + bearings[command.direction] : null;
         this.planMove(command.direction, command.distanceCm);
-        const moved = await this.move(x, y, m, log);
+        const { report: moved, correctionDeg } = await this.move(bearings[command.direction], lineDeg, sentCm, log);
         if (moved) {
           const short = moved.cm < command.distanceCm * SHORT_MOVE_RATIO;
-          const off = moved.offDeg === null ? '' : `, ${Math.round(Math.abs(moved.offDeg))}° ${moved.offDeg >= 0 ? 'left' : 'right'} of the expected direction`;
+          const off = moved.offDeg === null ? '' : `, ${Math.round(Math.abs(moved.offDeg))}° ${moved.offDeg >= 0 ? 'left' : 'right'} of the line`;
+          const side = moved.maxSideCm === null ? '' : `, at most ${Math.round(moved.maxSideCm)} cm off the line`;
           const sent = Math.round(sentCm) === command.distanceCm ? '' : `, sent ${Math.round(sentCm)} cm`;
-          log(`${short ? '⚠ ' : ''}moved ${Math.round(moved.cm)} cm (asked ${command.distanceCm} cm${sent})${off}`);
+          log(`${short ? '⚠ ' : ''}moved ${Math.round(moved.cm)} cm (asked ${command.distanceCm} cm${sent})${off}${side}`);
           this.learnMoveRatio(moved, sentCm, log);
-          measure({ kind: 'move', askedCm: command.distanceCm, sentCm, movedCm: moved.cm, offDeg: moved.offDeg });
+          measure({
+            kind: 'move',
+            askedCm: command.distanceCm,
+            sentCm,
+            movedCm: moved.cm,
+            offDeg: moved.offDeg,
+            maxSideCm: moved.maxSideCm,
+            correctionDeg,
+          });
         }
         return;
       }
@@ -457,45 +481,90 @@ export class DroneRunner {
   }
 
   /**
-   * Moves relative to the drone's heading. Returns the distance actually travelled (cm),
-   * or null when the position could not be read.
+   * Moves by `sentCm` at `bearingDeg` from the drone's nose (0 forward, 90 left), along the planned
+   * line `lineDeg` (take-off frame) when known. Returns what was measured, or a null report when
+   * the position could not be read.
    *
    * Seen on hardware: right after a turn the drone still reports "Moving" while it steadies,
    * and a move sent then was skipped (the old code took the leftover "Moving" as the move
    * starting, so it never resent it). So: wait for "Hovering", then resend the move until a
    * fresh state says "Moving".
+   *
+   * Straight lines: the move is sent relative to the drone's nose, so if the nose is a few
+   * degrees off the planned heading (after a turn), the move is angled by that much to follow
+   * the planned line instead. Its position is sampled during the move to measure how far it
+   * strays from the line.
    */
-  private async move(x: number, y: number, distanceM: number, log: (m: string) => void): Promise<MoveReport | null> {
-    const packet = () => controlPositionPacket(x, y, 0, RUNNER_LIMITS.moveSpeed);
+  private async move(
+    bearingDeg: number,
+    lineDeg: number | null,
+    sentCm: number,
+    log: (m: string) => void,
+  ): Promise<{ report: MoveReport | null; correctionDeg: number }> {
     let start: { x: number; y: number } | null;
-    let heading: number | null;
+    let line: number | null = lineDeg;
+    let correctionDeg = 0;
     this.pollPaused = true;
     try {
       await this.settle(log);
       start = await this.freshPosition();
-      const motion = await this.fresh(DataType.Motion, requestMotionPacket, HEADING_TIMEOUT_MS);
-      heading = motion && parseMotionYaw(motion);
+      const heading = await this.tryYaw(HEADING_TIMEOUT_MS);
+      if (heading !== null) {
+        line ??= heading + bearingDeg;
+        const error = wrap180(line - (heading + bearingDeg));
+        correctionDeg = Math.max(-MAX_MOVE_CORRECTION_DEG, Math.min(MAX_MOVE_CORRECTION_DEG, error));
+        if (Math.abs(correctionDeg) >= 1) {
+          log(`aiming ${Math.round(Math.abs(correctionDeg))}° ${correctionDeg > 0 ? 'left' : 'right'} to stay on the line (the nose is that far off)`);
+        }
+      }
+      const r = ((bearingDeg + correctionDeg) * Math.PI) / 180;
+      const m = sentCm / 100;
+      const packet = () => controlPositionPacket(m * Math.cos(r), m * Math.sin(r), 0, RUNNER_LIMITS.moveSpeed);
       await this.sendUntilMoving(packet, 'The drone did not start the move.');
     } finally {
       this.pollPaused = false;
     }
-    await this.wait((distanceM / RUNNER_LIMITS.moveSpeed) * 1000 + 1000);
+    const path = await this.trackPath((sentCm / 100 / RUNNER_LIMITS.moveSpeed) * 1000 + 1000);
 
     this.pollPaused = true;
     try {
       const end = await this.freshPosition();
-      if (!start || !end) return null;
+      if (!start || !end) return { report: null, correctionDeg };
       const [dx, dy] = [end.x - start.x, end.y - start.y];
       const cm = Math.hypot(dx, dy) * 100;
-      // Position and heading share the take-off frame (left +), so a move along the drone's
-      // nose should point at heading + the move's own bearing.
-      const expected = heading === null ? null : heading + (Math.atan2(y, x) * 180) / Math.PI;
-      const offDeg = expected === null || cm < 3 ? null : wrap180((Math.atan2(dy, dx) * 180) / Math.PI - expected);
-      return { cm, offDeg };
+      const offDeg = line === null || cm < 3 ? null : wrap180((Math.atan2(dy, dx) * 180) / Math.PI - line);
+      // Sideways distance of each sample (and the end) from the line through the start point.
+      let maxSideCm: number | null = null;
+      if (line !== null) {
+        const r = (line * Math.PI) / 180;
+        const from = start;
+        const side = (p: { x: number; y: number }) => Math.abs(-(p.x - from.x) * Math.sin(r) + (p.y - from.y) * Math.cos(r)) * 100;
+        maxSideCm = Math.max(side(end), ...path.map(side));
+      }
+      return { report: { cm, offDeg, maxSideCm }, correctionDeg };
     } finally {
       this.pollPaused = false;
     }
   }
+
+  /** Samples the drone's position (metres) for `ms`, keeping a State poll every 4th request for the safety checks. */
+  private async trackPath(ms: number): Promise<{ x: number; y: number }[]> {
+    const samples: { x: number; y: number }[] = [];
+    this.pathSamples = samples;
+    this.pollPaused = true;
+    try {
+      const until = Date.now() + ms;
+      for (let tick = 0; Date.now() < until; tick++) {
+        await this.send(tick % 4 === 3 ? requestStatePacket() : requestPositionPacket());
+        await this.wait(Math.min(PATH_SAMPLE_MS, Math.max(0, until - Date.now())));
+      }
+    } finally {
+      this.pathSamples = null;
+      this.pollPaused = false;
+    }
+    return samples;
+  }
+
 
   private learnMoveRatio(moved: MoveReport, sentCm: number, log: (m: string) => void) {
     if (sentCm < MIN_LEARN_MOVE_CM || (moved.offDeg !== null && Math.abs(moved.offDeg) > MAX_LEARN_OFF_DEG)) return;
@@ -661,6 +730,10 @@ export class DroneRunner {
     const now = Date.now();
     this.latest.set(packet.dataType, { at: now, payload: packet.payload });
     this.contactAt = now;
+    if (packet.dataType === DataType.Position && this.pathSamples) {
+      const p = parsePosition(packet.payload);
+      if (p) this.pathSamples.push(p);
+    }
     if (packet.dataType === DataType.State) {
       const s = parseState(packet.payload);
       if (!s) return;
