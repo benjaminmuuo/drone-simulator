@@ -112,7 +112,7 @@ past their target (more on a full battery). So the runner:
 `src/tests/fakeDrone.ts` behaves the same way.
 
 **Hardware test page.** `npm run dev`, then open `/spike/hardware.html`. It flies small test
-programs (single moves, single turns, the U-turn example) or pasted Blockly XML, and shows raw
+programs (single moves, single turns, a U-turn with a 40 cm sideways step) or pasted Blockly XML, and shows raw
 state and packet logs. It is not part of the production build.
 
 ## How a program flows through the app
