@@ -25,13 +25,16 @@ import {
   parseMotionYaw,
   parsePosition,
   parseState,
+  parseTrim,
   requestMotionPacket,
   requestPositionPacket,
+  requestTrimPacket,
   requestStatePacket,
   stopPacket,
   takeOffPacket,
+  trimPacket,
 } from './protocol';
-import type { DroneStatus, FlightMode, Packet } from './protocol';
+import type { DroneStatus, FlightMode, Packet, Trim } from './protocol';
 
 /** What the runner needs from the serial link (SerialLink, or a fake in tests). */
 export interface DroneLink {
@@ -171,6 +174,11 @@ export type Measurement =
       readonly afterTurn: boolean;
     }
   | { readonly kind: 'turn'; readonly askedDeg: number; readonly turnedDeg: number; readonly courseErrorDeg: number }
+  /**
+   * How far the drone drifted while hovering, relative to itself: forward + / back −, right + / left −.
+   * A steady drift one way is a trim problem.
+   */
+  | { readonly kind: 'hover'; readonly seconds: number; readonly forwardCm: number; readonly rightCm: number }
   /**
    * Where the drone ended, compared with where the program says it should be, just before landing.
    * In the take-off frame: forward + / back −, left + / right −.
@@ -382,10 +390,26 @@ export class DroneRunner {
         await this.measureEnd({ log, measure });
         log('→ land');
         return this.land(false);
-      case 'HOVER':
+      case 'HOVER': {
         log(`→ hover ${command.durationSeconds} s`);
         await this.send(controlPacket(0, 0, 0, 0));
-        return this.wait(command.durationSeconds * 1000);
+        // The readings count towards the hover time.
+        const until = Date.now() + command.durationSeconds * 1000;
+        const before = await this.stillReading();
+        await this.wait(Math.max(0, until - Date.now()));
+        const after = before ? await this.stillReading() : null;
+        if (before && after) {
+          const [dx, dy] = [(after.x - before.x) * 100, (after.y - before.y) * 100];
+          const r = (before.yawDeg * Math.PI) / 180;
+          const forwardCm = dx * Math.cos(r) + dy * Math.sin(r);
+          const rightCm = dx * Math.sin(r) - dy * Math.cos(r);
+          const seconds = (after.at - before.at) / 1000;
+          const part = (v: number, plus: string, minus: string) => `${Math.round(Math.abs(v))} cm ${v >= 0 ? plus : minus}`;
+          log(`drifted ${part(forwardCm, 'forward', 'back')}, ${part(rightCm, 'right', 'left')} in ${seconds.toFixed(1)} s`);
+          measure({ kind: 'hover', seconds, forwardCm, rightCm });
+        }
+        return;
+      }
       case 'MOVE': {
         log(`→ ${command.direction.toLowerCase()} ${command.distanceCm} cm`);
         const afterTurn = this.turnedSinceMove;
@@ -405,7 +429,9 @@ export class DroneRunner {
           const off = moved.offDeg === null ? '' : `, ${Math.round(Math.abs(moved.offDeg))}° ${moved.offDeg >= 0 ? 'left' : 'right'} of the line`;
           const side = moved.maxSideCm === null ? '' : `, at most ${Math.round(moved.maxSideCm)} cm off the line`;
           log(`${short ? '⚠ ' : ''}moved ${Math.round(moved.cm)} cm (asked ${command.distanceCm} cm${target}${sent})${off}${side}`);
-          this.learnMoveRatio(moved, result.sentCm, afterTurn, log);
+          // A move that needed the largest correction was fighting a big error: don't learn its distance.
+          const capped = Math.max(Math.abs(result.adjustAlongCm), Math.abs(result.adjustSideCm)) >= MAX_AIM_ADJUST_CM;
+          if (!capped) this.learnMoveRatio(moved, result.sentCm, afterTurn, log);
           measure({
             kind: 'move',
             askedCm: command.distanceCm,
@@ -509,6 +535,40 @@ export class DroneRunner {
     const [bx, by] = body[direction];
     const r = (this.plan.headingDeg * Math.PI) / 180;
     this.plan = { ...this.plan, x: this.plan.x + bx * Math.cos(r) - by * Math.sin(r), y: this.plan.y + bx * Math.sin(r) + by * Math.cos(r) };
+  }
+
+  /** Position (metres) and heading while the drone holds still, read with State polling paused. */
+  private async stillReading(): Promise<{ x: number; y: number; yawDeg: number; at: number } | null> {
+    this.pollPaused = true;
+    try {
+      const at = await this.freshPosition();
+      const yawDeg = await this.tryYaw(HEADING_TIMEOUT_MS);
+      return at && yawDeg !== null ? { ...at, yawDeg, at: Date.now() } : null;
+    } finally {
+      this.pollPaused = false;
+    }
+  }
+
+  /** The trim stored on the drone, or null if it didn't answer. Only between flights. */
+  async readTrim(): Promise<Trim | null> {
+    if (this.running) throw new Error('Trim can only be read between flights');
+    this.pollPaused = true;
+    try {
+      const payload = await this.fresh(DataType.Trim, requestTrimPacket, HEADING_TIMEOUT_MS);
+      return payload && parseTrim(payload);
+    } finally {
+      this.pollPaused = false;
+    }
+  }
+
+  /** Stores a new trim on the drone (sent 3 times, like codrone-edu's set_trim) and reads it back. Only between flights. */
+  async setTrim(trim: Trim): Promise<Trim | null> {
+    if (this.running) throw new Error('Trim can only be set between flights');
+    for (let i = 0; i < 3; i++) {
+      await this.link.send(trimPacket(trim));
+      await sleep(200);
+    }
+    return this.readTrim();
   }
 
   /** Before landing: how far is the drone from where the program says it should be? */

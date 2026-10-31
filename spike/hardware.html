@@ -48,6 +48,18 @@
       <span>Rejected packets</span><b id="s-rejected">–</b>
     </div>
 
+    <h2>Trim (drift correction)</h2>
+    <p class="hint">
+      If the drone slides one way while hovering, its trim is off. Each round takes off, hovers 5 s, measures the drift and
+      lands, then changes the trim by a small step against it. Put the drone back in the same spot and repeat until it says
+      it's holding still. Trim is stored on the drone.
+    </p>
+    <p class="row">
+      <span id="trim-now">Trim: –</span>
+      <button id="trim-round" disabled>Measure drift and adjust trim</button>
+      <button id="trim-reset" disabled>Reset trim to 0</button>
+    </p>
+
     <h2>Flight School calibration</h2>
     <p class="hint">
       Put the drone on the lesson's start mark facing forward, fly a lesson, then put it back on the start mark. Fly each lesson

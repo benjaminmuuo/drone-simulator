@@ -232,6 +232,40 @@ describe('DroneRunner', () => {
     expect(end.leftCm).toBeCloseTo(-20, 0);
   });
 
+  it('does not learn the distance from a move fighting an error past the cap', async () => {
+    drone.overshootDeg = 4;
+    // This drone flies 80 % of its moves, which would normally be learned...
+    drone.travelRatio = 0.8;
+    const run = runner.run([cmd.takeoff, cmd.hover(2), cmd.forward(50), cmd.land]);
+    await vi.advanceTimersByTimeAsync(4300);
+    // ...but this move starts 30 cm off the plan, so its correction hits the 10 cm cap.
+    drone.y -= 0.3;
+    await settle(run);
+    expect(runner.calibration.moveRatio).toBe(1);
+  });
+
+  it('measures the drift while hovering, relative to the drone', async () => {
+    const measurements: Measurement[] = [];
+    const log: string[] = [];
+    const run = runner.run([cmd.takeoff, cmd.hover(3), cmd.land], { onMeasure: (m) => measurements.push(m), onLog: (m) => log.push(m) });
+    await vi.advanceTimersByTimeAsync(5000);
+    // Facing forward (yaw 0), the drone slides 6 cm to its right (−y) during the hover.
+    drone.y -= 0.06;
+    await settle(run);
+    const hover = measurements.find((m) => m.kind === 'hover') as Extract<Measurement, { kind: 'hover' }>;
+    expect(hover.rightCm).toBeCloseTo(6, 0);
+    expect(Math.abs(hover.forwardCm)).toBeLessThan(1);
+    expect(hover.seconds).toBeGreaterThan(2.5);
+    expect(log).toContainEqual(expect.stringMatching(/^drifted 0 cm forward, 6 cm right in \d\.\d s$/));
+  });
+
+  it('reads and sets the trim stored on the drone', async () => {
+    drone.trim = [3, -1, 0, 0];
+    expect(await settle(runner.readTrim())).toEqual({ roll: 3, pitch: -1, yaw: 0, throttle: 0 });
+    expect(await settle(runner.setTrim({ roll: -4, pitch: 2, yaw: 0, throttle: 0 }))).toEqual({ roll: -4, pitch: 2, yaw: 0, throttle: 0 });
+    expect(drone.trim).toEqual([-4, 2, 0, 0]);
+  });
+
   it('does not learn distances from an unusual move', async () => {
     drone.travelRatio = 0.3;
     const log: string[] = [];
@@ -245,9 +279,9 @@ describe('DroneRunner', () => {
     drone.overshootDeg = 4;
     const measurements: Measurement[] = [];
     await settle(runner.run(parse(UTURN_XML), { onMeasure: (m) => measurements.push(m) }));
-    expect(measurements.map((m) => m.kind)).toEqual(['move', 'turn', 'move', 'turn', 'move', 'end']);
-    expect(measurements[0]).toMatchObject({ kind: 'move', askedCm: 50 });
-    expect(measurements[1]).toMatchObject({ kind: 'turn', askedDeg: 90 });
+    expect(measurements.map((m) => m.kind)).toEqual(['hover', 'move', 'turn', 'move', 'turn', 'move', 'end']);
+    expect(measurements[1]).toMatchObject({ kind: 'move', askedCm: 50 });
+    expect(measurements[2]).toMatchObject({ kind: 'turn', askedDeg: 90 });
     // So it ends where the program says.
     expect(measurements.at(-1)).toMatchObject({ kind: 'end' });
     expect((measurements.at(-1) as Extract<Measurement, { kind: 'end' }>).offCm).toBeLessThan(2);

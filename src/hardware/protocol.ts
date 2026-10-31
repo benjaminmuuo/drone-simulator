@@ -23,6 +23,7 @@ export const DataType = {
   State: 0x40,
   Position: 0x42,
   Motion: 0x44,
+  Trim: 0x52,
   LostConnection: 0x54,
 } as const;
 
@@ -134,6 +135,27 @@ export const stopPacket = () => encodePacket(DataType.Command, [CommandType.Stop
 export const requestStatePacket = () => encodePacket(DataType.Request, [DataType.State]);
 export const requestMotionPacket = () => encodePacket(DataType.Request, [DataType.Motion]);
 export const requestPositionPacket = () => encodePacket(DataType.Request, [DataType.Position]);
+export const requestTrimPacket = () => encodePacket(DataType.Request, [DataType.Trim]);
+
+/** Trim values stored on the drone, each -100..100 (codrone-edu's set_trim: roll + leans right, pitch + forward). */
+export interface Trim {
+  readonly roll: number;
+  readonly pitch: number;
+  readonly yaw: number;
+  readonly throttle: number;
+}
+
+export function trimPacket({ roll, pitch, yaw, throttle }: Trim) {
+  const view = new DataView(new ArrayBuffer(8));
+  [roll, pitch, yaw, throttle].forEach((v, i) => view.setInt16(i * 2, Math.max(-100, Math.min(100, Math.round(v))), true));
+  return encodePacket(DataType.Trim, new Uint8Array(view.buffer));
+}
+
+export function parseTrim(payload: Uint8Array): Trim | null {
+  if (payload.length !== 8) return null;
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  return { roll: view.getInt16(0, true), pitch: view.getInt16(2, true), yaw: view.getInt16(4, true), throttle: view.getInt16(6, true) };
+}
 export const commandPacket = (commandType: number, option: number) =>
   encodePacket(DataType.Command, [commandType, option]);
 

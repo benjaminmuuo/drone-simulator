@@ -147,6 +147,15 @@ sideways distance from the line. Every 4th sample is a status request instead, s
 checks keep running. Distances are learned as two ratios: one for ordinary moves, and one for moves
 straight after a turn, which fell about 10% shorter on hardware.
 
+**Trim.** Every hover block measures how far the drone drifted, relative to itself (`drifted 1 cm
+forward, 6 cm right in 2.0 s`). A steady drift one way is a trim problem. The test page's **Trim**
+section corrects it in rounds. Each round takes off, hovers 5 s, measures the drift and lands, then
+moves the roll/pitch trim stored on the drone a small step against it (`src/hardware/trim.ts`):
+about 1 unit per cm/s, at most 4 per round, never past ±30. Signs follow codrone-edu: roll + leans
+right, pitch + forward. Repeat until it reports it's holding still (under 0.5 cm/s). **Reset trim
+to 0** undoes it. Moves whose planned-point correction hits the 10 cm cap aren't used to learn
+distances.
+
 **Hardware test page.** `npm run dev`, then open `/spike/hardware.html`. **Flight School calibration**
 has a button for each lesson. Fly each one several times, putting the drone back on the start mark
 in between. The **Results** table summarises every flight: moves (distance flown vs asked), turn

@@ -8,6 +8,9 @@ import {
   controlPacket,
   controlPositionPacket,
   lostConnectionPacket,
+  parseTrim,
+  requestTrimPacket,
+  trimPacket,
   crc16,
   landingPacket,
   parseMotionYaw,
@@ -33,6 +36,9 @@ const GOLDEN = {
   requestPosition: '0a 55 04 01 70 10 42 4f 4c',
   /** Lost link: neutral 600 ms, land 3000 ms, stop 120 s; the drone read this back after it was set. */
   lostLink: '0a 55 54 08 70 10 58 02 b8 0b c0 d4 01 00 b8 5f',
+  /** Trim roll -4, pitch 2. */
+  trim: '0a 55 52 08 70 10 fc ff 02 00 00 00 00 00 00 b0',
+  requestTrim: '0a 55 04 01 70 10 52 7e 5e',
   speed2: '0a 55 11 02 70 10 04 02 37 f6',
   modePosition: '0a 55 11 02 70 10 02 11 c3 7e',
   headlessNormal: '0a 55 11 02 70 10 03 02 a0 6f',
@@ -69,6 +75,8 @@ describe('packet encoding', () => {
     ['moveForward50', controlPositionPacket(0.5, 0, 0, 0.5)],
     ['moveRight30', controlPositionPacket(0, -0.3, 0, 0.5)],
     ['lostLink', lostConnectionPacket(600, 3000, 120_000)],
+    ['trim', trimPacket({ roll: -4, pitch: 2, yaw: 0, throttle: 0 })],
+    ['requestTrim', requestTrimPacket()],
   ] as const)('%s matches the golden bytes', (name, packet) => {
     expect(toHex(packet)).toBe(GOLDEN[name]);
   });
@@ -89,6 +97,10 @@ describe('PacketDecoder', () => {
     const payload = bytes('7d 12 8d 3c 1b 77 e1 3d b0 fc 04 3e');
     const p = parsePosition(payload)!;
     expect([p.x, p.y, p.z].map((v) => +v.toFixed(4))).toEqual([0.0172, 0.1101, 0.1299]);
+  });
+
+  it('decodes a trim reply', () => {
+    expect(parseTrim(bytes('fc ff 02 00 00 00 00 00'))).toEqual({ roll: -4, pitch: 2, yaw: 0, throttle: 0 });
   });
 
   it('decodes the yaw angle from a motion packet', () => {

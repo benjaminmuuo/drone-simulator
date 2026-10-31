@@ -12,6 +12,8 @@ import type { DroneCommand } from '../parser/types';
 import { DroneRunner } from './DroneRunner';
 import type { Calibration, Measurement } from './DroneRunner';
 import { clearCalibration, loadCalibration, saveCalibration } from './calibrationStore';
+import type { Trim } from './protocol';
+import { TRIM_RULES, nextTrim } from './trim';
 import { SerialLink, isWebSerialSupported } from './SerialLink';
 import { DataType, toHex } from './protocol';
 
@@ -27,6 +29,9 @@ const ui = {
   raw: $<HTMLInputElement>('raw'),
   headingTurns: $<HTMLInputElement>('heading-turns'),
   lessons: $('lessons'),
+  trimNow: $('trim-now'),
+  trimRound: $<HTMLButtonElement>('trim-round'),
+  trimReset: $<HTMLButtonElement>('trim-reset'),
   calibration: $('calibration'),
   results: $('results'),
   resultsText: $<HTMLTextAreaElement>('results-text'),
@@ -191,7 +196,9 @@ function resultsText(): string {
           `${m.adjustAlongCm || m.adjustSideCm ? ` adj ${r0(m.adjustAlongCm)}/${r0(m.adjustSideCm)}` : ''}`
         : m.kind === 'turn'
           ? `tn ${r0(m.turnedDeg)}/${m.askedDeg} crs ${r0(m.courseErrorDeg)}°`
-          : `end ${r0(m.offCm)}cm (fwd ${r0(m.forwardCm)}, left ${r0(m.leftCm)})`,
+          : m.kind === 'hover'
+            ? `hv ${r1(m.seconds)}s drift fwd ${r0(m.forwardCm)} right ${r0(m.rightCm)}`
+            : `end ${r0(m.offCm)}cm (fwd ${r0(m.forwardCm)}, left ${r0(m.leftCm)})`,
     );
     lines.push(
       `${f.at} ${f.name} [${f.outcome}; cal ${f.calibration.overshootDeg.toFixed(1)}°/${f.calibration.moveRatio.toFixed(3)}]: ${parts.join('; ')}` +
@@ -224,6 +231,8 @@ function render() {
   ui.disconnect.disabled = link === null || runner?.isRunning === true;
   ui.programs.querySelectorAll('button').forEach((b) => (b.disabled = !idle));
   ui.lessons.querySelectorAll('button').forEach((b) => (b.disabled = !idle));
+  ui.trimRound.disabled = !idle;
+  ui.trimReset.disabled = !idle;
   ui.resetCalibration.disabled = runner?.isRunning === true;
   ui.runXml.disabled = !idle;
   ui.abort.disabled = link === null;
@@ -299,6 +308,8 @@ async function connect() {
   });
   ageTimer = window.setInterval(render, 250);
   render();
+  // Show the drone's current trim once it answers.
+  window.setTimeout(() => void readTrimNow(), 1000);
 }
 
 function cleanup() {
@@ -325,6 +336,72 @@ for (const lesson of LESSONS) {
   b.onclick = () => void fly(lesson.name, () => parse(lesson.exampleXml!));
   ui.lessons.append(b);
 }
+
+/* ---------- Trim ---------- */
+
+const showTrim = (t: Trim | null) => {
+  ui.trimNow.textContent = t ? `Trim: roll ${t.roll}, pitch ${t.pitch}` : 'Trim: not read';
+};
+
+async function readTrimNow(): Promise<Trim | null> {
+  const t = (await runner?.readTrim()) ?? null;
+  showTrim(t);
+  return t;
+}
+
+/** One round: hover 5 s, measure the drift, step the trim against it. */
+async function trimRound() {
+  if (!runner) return;
+  const before = await readTrimNow();
+  if (!before) {
+    log('✗ could not read the trim from the drone');
+    return;
+  }
+  let hover: Extract<Measurement, { kind: 'hover' }> | null = null;
+  log(`▶ trim round (trim now roll ${before.roll}, pitch ${before.pitch})`);
+  const outcome = await runner.run([T, { type: 'HOVER', durationSeconds: 5, blockId: null }, L], {
+    onLog: (m) => log(`    ${m}`),
+    onMeasure: (m) => {
+      if (m.kind === 'hover') hover = m;
+    },
+  });
+  render();
+  const h = hover as Extract<Measurement, { kind: 'hover' }> | null;
+  if (outcome.status !== 'COMPLETED' || !h) {
+    log(`✗ trim round not finished (${outcome.status === 'FAILED' ? outcome.message : outcome.status.toLowerCase()}); trim unchanged`);
+    return;
+  }
+  const drift = { forwardCmPerS: h.forwardCm / h.seconds, rightCmPerS: h.rightCm / h.seconds };
+  log(`  drift: ${r1(drift.forwardCmPerS)} cm/s forward, ${r1(drift.rightCmPerS)} cm/s right`);
+  const round = nextTrim(before, drift);
+  if (round.holdingStill) {
+    log(`✓ holding still (under ${TRIM_RULES.deadbandCmPerS} cm/s each way): trim stays roll ${before.roll}, pitch ${before.pitch}`);
+    return;
+  }
+  const after = await runner.setTrim(round.trim);
+  showTrim(after);
+  log(
+    after && after.roll === round.trim.roll && after.pitch === round.trim.pitch
+      ? `✓ trim set: roll ${before.roll} → ${after.roll}, pitch ${before.pitch} → ${after.pitch}. Put the drone back and run another round.`
+      : `✗ trim not confirmed by the drone (read back ${after ? `roll ${after.roll}, pitch ${after.pitch}` : 'nothing'})`,
+  );
+}
+
+ui.trimRound.onclick = async () => {
+  ui.trimRound.disabled = true;
+  try {
+    await trimRound();
+  } finally {
+    render();
+  }
+};
+ui.trimReset.onclick = async () => {
+  if (!runner || !window.confirm('Set the drone\'s roll and pitch trim back to 0?')) return;
+  const before = await readTrimNow();
+  const after = await runner.setTrim({ roll: 0, pitch: 0, yaw: before?.yaw ?? 0, throttle: before?.throttle ?? 0 });
+  showTrim(after);
+  log(after && after.roll === 0 && after.pitch === 0 ? '✓ trim reset to 0' : '✗ trim reset not confirmed');
+};
 
 ui.copyResults.onclick = async () => {
   const text = resultsText();

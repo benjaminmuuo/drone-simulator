@@ -42,6 +42,8 @@ export class FakeDrone implements DroneLink {
   /** Extra rotation at the end of a turn, either method (as seen on hardware). */
   overshootDeg = 0;
   readonly turns: number[] = [];
+  /** Trim stored on the drone: roll, pitch, yaw, throttle. */
+  trim = [0, 0, 0, 0];
   /** Lost-link settings received: [neutral ms, landing ms, stop ms]. */
   readonly lostLinkSettings: number[][] = [];
   private settleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -104,6 +106,10 @@ export class FakeDrone implements DroneLink {
   private answer(type: number) {
     if (type === DataType.State) {
       this.reply(DataType.State, [0x12, this.flight, 0x11, this.movement, 0x02, 0x02, 0x01, this.battery]);
+    } else if (type === DataType.Trim) {
+      const view = new DataView(new ArrayBuffer(8));
+      this.trim.forEach((v, i) => view.setInt16(i * 2, v, true));
+      this.reply(DataType.Trim, Array.from(new Uint8Array(view.buffer)));
     } else if (type === DataType.Position) {
       const view = new DataView(new ArrayBuffer(12));
       const at = this.where();
@@ -122,6 +128,11 @@ export class FakeDrone implements DroneLink {
 
   private command(p: Packet) {
     const d = p.payload;
+    if (p.dataType === DataType.Trim) {
+      const view = new DataView(d.buffer, d.byteOffset, d.byteLength);
+      this.trim = [0, 1, 2, 3].map((i) => view.getInt16(i * 2, true));
+      return;
+    }
     if (p.dataType === DataType.LostConnection) {
       const view = new DataView(d.buffer, d.byteOffset, d.byteLength);
       this.lostLinkSettings.push([view.getUint16(0, true), view.getUint16(2, true), view.getUint32(4, true)]);
