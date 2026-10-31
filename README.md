@@ -91,10 +91,17 @@ to the CoDrone EDU controller over USB directly, like Robolink Blockly does.
    - Short radio dropouts are ridden out where it's safe: a flight waits up to 2 s for the drone
      to answer before refusing to start; landing keeps sending "land" for up to 10 s, waiting for
      the drone to confirm; position and heading readings taken while the drone is still wait up to
-     1.2 s. A dropout mid-flight still stops the flight after 1.5 s.
+     1.2 s.
+   - **Mid-flight dropouts:** when replies stop for 1.5 s, the runner **holds**. It shows "Signal
+     lost: holding…", keeps asking for the drone's state, and sends no flight commands, so a move in
+     progress still finishes. It waits up to 5 s more. If the signal comes back, the warning clears
+     and the program carries on (the next move's planned-point aiming makes up any position error).
+     If not, contact counts as lost. Every dropout is recorded with its length and whether it
+     recovered (`DROPOUT 2.3s recovered` in Copy results).
    - **If the radio link is lost, the drone lands by itself.** At the start of every flight the app
-     sets the drone's own lost-link behaviour: stop moving after 0.6 s, land after 3 s (its
-     default was to land only after 20 s, so it just hovered), and stop the motors after 120 s.
+     sets the drone's own lost-link behaviour: stop moving and hold after 0.6 s, land after 8 s
+     (after the app's own wait, and much sooner than its default of 20 s), and stop the motors
+     after 120 s.
      The app also keeps sending "land" for up to 30 s after losing contact, and shows a warning
      to press STOP if the drone doesn't come down.
 

@@ -438,20 +438,48 @@ describe('DroneRunner', () => {
     for (let t = 0; !done() && t < maxMs; t += 50) await vi.advanceTimersByTimeAsync(50);
   }
 
-  it('tells the drone to land by itself 3 s after losing the link, before every flight', async () => {
+  it('tells the drone to hold, then land by itself 8 s after losing the link, before every flight', async () => {
     await settle(runner.run([cmd.takeoff, cmd.land]));
-    expect(drone.lostLinkSettings.at(-1)).toEqual([600, 3000, 120_000]);
+    expect(drone.lostLinkSettings.at(-1)).toEqual([600, 8000, 120_000]);
   });
 
-  it('after losing contact mid-flight, warns and keeps telling the drone to land until it confirms', async () => {
-    const warnings: string[] = [];
-    const run = runner.run([cmd.takeoff, cmd.hover(30), cmd.land], { onWarning: (w) => warnings.push(w) });
+  it('holds through a short dropout and carries on with the program', async () => {
+    const warnings: (string | null)[] = [];
+    const measurements: Measurement[] = [];
+    const run = runner.run([cmd.takeoff, cmd.hover(10), cmd.forward(50), cmd.land], {
+      onWarning: (w) => warnings.push(w),
+      onMeasure: (m) => measurements.push(m),
+    });
+    await until(() => drone.flight === FLIGHT.Flight);
+    await vi.advanceTimersByTimeAsync(3000);
+    // No replies for 3 s, then the signal comes back.
+    drone.silent = true;
+    await vi.advanceTimersByTimeAsync(3000);
+    drone.silent = false;
+    expect(await settle(run)).toEqual({ status: 'COMPLETED' });
+    expect(warnings).toEqual([expect.stringMatching(/^Signal lost: holding/), null]);
+    const dropout = measurements.find((m) => m.kind === 'dropout') as Extract<Measurement, { kind: 'dropout' }>;
+    expect(dropout.recovered).toBe(true);
+    expect(dropout.seconds).toBeGreaterThan(2.5);
+    expect(dropout.seconds).toBeLessThan(4);
+    // The rest of the program still ran.
+    expect(drone.events).toContain('MOVE 0.50,0.00');
+  });
+
+  it('after a dropout longer than the wait, warns and keeps telling the drone to land until it confirms', async () => {
+    const warnings: (string | null)[] = [];
+    const measurements: Measurement[] = [];
+    const run = runner.run([cmd.takeoff, cmd.hover(30), cmd.land], { onWarning: (w) => warnings.push(w), onMeasure: (m) => measurements.push(m) });
     await until(() => drone.flight === FLIGHT.Flight);
     await vi.advanceTimersByTimeAsync(2000);
-    // The link drops for 6 s: replies stop (the runner's land commands still get through here).
+    // Replies stop for 9 s, longer than 1.5 s + the 5 s wait (the runner's land commands still get through here).
     drone.silent = true;
-    await vi.advanceTimersByTimeAsync(6000);
-    expect(warnings).toEqual([expect.stringMatching(/^Lost contact with the drone\. It should land by itself within 3 seconds/)]);
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(warnings).toEqual([
+      expect.stringMatching(/^Signal lost: holding/),
+      'Lost contact with the drone. It should land by itself within a few seconds. Press STOP if it does not.',
+    ]);
+    expect(measurements.find((m) => m.kind === 'dropout')).toMatchObject({ recovered: false });
     drone.silent = false;
     const outcome = await settle(run);
     expect(outcome).toMatchObject({ status: 'FAILED', message: 'Lost contact with the drone during the flight. It has landed.' });

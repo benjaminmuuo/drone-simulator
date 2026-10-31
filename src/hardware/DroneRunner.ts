@@ -107,11 +107,18 @@ const HEADING_TIMEOUT_MS = 1200;
  */
 const LAND_CONFIRM_MS = 10_000;
 /**
+ * When replies stop mid-flight, hold on this long (after the 1.5 s it takes to notice) for the
+ * signal to come back before treating contact as lost. The drone carries on with what it was
+ * told and then holds position; when replies return, the program continues.
+ */
+export const RECONNECT_WAIT_MS = 5000;
+/**
  * The drone's own lost-link behaviour, sent at the start of every flight. Its default was to
  * land only after 20 s without a link, so after a dropout it just hovered (seen on hardware).
- * Now it stops moving after 0.6 s and lands by itself after 3 s.
+ * Now it stops moving after 0.6 s, and lands by itself after 8 s: after the app's own wait
+ * (1.5 s + RECONNECT_WAIT_MS), so it doesn't land while the app is still waiting for the signal.
  */
-export const LOST_LINK = { neutralMs: 600, landingMs: 3000, stopMs: 120_000 } as const;
+export const LOST_LINK = { neutralMs: 600, landingMs: 8000, stopMs: 120_000 } as const;
 /** After losing contact mid-flight, keep sending "land" this long, waiting for the drone to confirm. */
 const LOST_CONTACT_LAND_MS = 30_000;
 /** Before refusing to start because the drone isn't answering, wait this long for it to reply. */
@@ -179,6 +186,8 @@ export type Measurement =
    * A steady drift one way is a trim problem.
    */
   | { readonly kind: 'hover'; readonly seconds: number; readonly forwardCm: number; readonly rightCm: number }
+  /** Replies stopped mid-flight for `seconds`; recovered = the signal came back and the flight carried on. */
+  | { readonly kind: 'dropout'; readonly seconds: number; readonly recovered: boolean }
   /**
    * Where the drone ended, compared with where the program says it should be, just before landing.
    * In the take-off frame: forward + / back −, left + / right −.
@@ -190,8 +199,8 @@ export interface RunEvents {
   onStep?(index: number, command: DroneCommand): void;
   onLog?(message: string): void;
   onMeasure?(measurement: Measurement): void;
-  /** Something the person flying must know now (e.g. contact lost while the drone may be flying). */
-  onWarning?(message: string): void;
+  /** Something the person flying must know now (e.g. the signal is lost); null clears it. */
+  onWarning?(message: string | null): void;
 }
 
 class Cancelled extends Error {}
@@ -199,6 +208,7 @@ class Cancelled extends Error {}
 interface Report {
   log(message: string): void;
   measure(measurement: Measurement): void;
+  warn(message: string | null): void;
 }
 
 /** How far a move really went, and how far its direction was from the intended one (left +). */
@@ -260,6 +270,8 @@ export class DroneRunner {
   private plan: { x: number; y: number; headingDeg: number } | null = null;
   /** Position samples (metres) collected while a move is tracked; null otherwise. */
   private pathSamples: { x: number; y: number }[] | null = null;
+  /** Where the running flight reports to (null between flights). */
+  private report: Report | null = null;
 
   constructor(
     private readonly link: DroneLink,
@@ -325,7 +337,8 @@ export class DroneRunner {
     this.running = true;
     this.cancel = null;
     const log = (m: string) => events.onLog?.(m);
-    const report: Report = { log, measure: (m) => events.onMeasure?.(m) };
+    const report: Report = { log, measure: (m) => events.onMeasure?.(m), warn: (w) => events.onWarning?.(w) };
+    this.report = report;
     let index: number | null = null;
     try {
       await this.setup();
@@ -341,9 +354,8 @@ export class DroneRunner {
       log(`✗ ${message}`);
       if (e instanceof LostContactError) {
         // The drone may still be flying: keep telling it to land until it confirms.
-        const warning =
-          `Lost contact with the drone. It should land by itself within ${LOST_LINK.landingMs / 1000} seconds. ` +
-          'Press STOP if it does not.';
+        // By now it has been silent for 1.5 s + RECONNECT_WAIT_MS; the drone lands itself at LOST_LINK.landingMs.
+        const warning = 'Lost contact with the drone. It should land by itself within a few seconds. Press STOP if it does not.';
         events.onWarning?.(warning);
         log(`⚠ ${warning}`);
         const landed = await this.landUntilConfirmed();
@@ -360,6 +372,7 @@ export class DroneRunner {
       return { status: 'FAILED', message, commandIndex: index };
     } finally {
       this.running = false;
+      this.report = null;
     }
   }
 
@@ -572,7 +585,7 @@ export class DroneRunner {
   }
 
   /** Before landing: how far is the drone from where the program says it should be? */
-  private async measureEnd({ log, measure }: Report) {
+  private async measureEnd({ log, measure }: Pick<Report, 'log' | 'measure'>) {
     if (!this.plan) return;
     this.pollPaused = true;
     let at: { x: number; y: number } | null;
@@ -907,16 +920,60 @@ export class DroneRunner {
   }
 
   private async freshYaw(): Promise<number> {
-    const yaw = await this.tryYaw(HEADING_TIMEOUT_MS);
+    let yaw = await this.tryYaw(HEADING_TIMEOUT_MS);
+    if (yaw === null) {
+      // No reply: wait for the signal to come back, then try once more.
+      await this.holdForSignal();
+      yaw = await this.tryYaw(HEADING_TIMEOUT_MS);
+    }
     if (yaw === null) throw new FlightError('The drone stopped sending its heading, so the turn was cancelled.');
     return yaw;
   }
 
   private async freshState(): Promise<DroneStatus> {
-    const payload = await this.fresh(DataType.State, requestStatePacket);
-    const state = payload && parseState(payload);
+    const read = async () => {
+      const payload = await this.fresh(DataType.State, requestStatePacket);
+      return payload && parseState(payload);
+    };
+    let state = await read();
+    if (!state) {
+      await this.holdForSignal();
+      state = await read();
+    }
     if (!state) throw new LostContactError('Lost contact with the drone.');
     return state;
+  }
+
+  /**
+   * Replies have stopped: wait for the next one, asking for the drone's state a few times a second.
+   * Once silent for STATE_STALE_MS it warns ("holding"); if still silent RECONNECT_WAIT_MS later,
+   * contact counts as lost. Sends no flight commands, so a move in progress isn't cut short.
+   */
+  private async holdForSignal(): Promise<void> {
+    const lastContact = this.contactAt;
+    const waitFrom = Date.now();
+    let warned = false;
+    while (this.contactAt < waitFrom) {
+      if (this.cancel) throw new Cancelled();
+      const silentFor = Date.now() - lastContact;
+      if (!warned && silentFor >= STATE_STALE_MS) {
+        warned = true;
+        this.report?.log(`⚠ no replies from the drone: holding, waiting up to ${RECONNECT_WAIT_MS / 1000} s for the signal`);
+        this.report?.warn(`Signal lost: holding and waiting for it to come back (up to ${RECONNECT_WAIT_MS / 1000} s).`);
+      }
+      if (silentFor >= STATE_STALE_MS + RECONNECT_WAIT_MS) {
+        this.report?.measure({ kind: 'dropout', seconds: silentFor / 1000, recovered: false });
+        throw new LostContactError('Lost contact with the drone.');
+      }
+      await this.link.send(requestStatePacket()).catch(() => {});
+      await sleep(200);
+    }
+    if (warned) {
+      const seconds = (Date.now() - lastContact) / 1000;
+      this.report?.log(`✓ signal back after ${seconds.toFixed(1)} s: carrying on`);
+      this.report?.warn(null);
+      this.report?.measure({ kind: 'dropout', seconds, recovered: true });
+    }
   }
 
   /** Position is only used to report and aim, so a missing reading is not an error. Read while the drone is still. */
@@ -954,6 +1011,7 @@ export class DroneRunner {
   private async wait(ms: number) {
     const until = Date.now() + ms;
     for (;;) {
+      if (!this.isAnswering && this.running) await this.holdForSignal();
       this.check();
       const left = until - Date.now();
       if (left <= 0) return;
@@ -963,7 +1021,7 @@ export class DroneRunner {
 
   private check() {
     if (this.cancel) throw new Cancelled();
-    if (!this.isAnswering) throw new LostContactError('Lost contact with the drone.');
+    // Silence is handled in wait() (holdForSignal), which can wait for the signal to come back.
     const f = this.status?.flight;
     if (f === 'Accident' || f === 'Error' || f === 'Stop') throw new FlightError(`The drone reported “${f}” and stopped flying.`);
     if (this.lowBatterySince !== null && Date.now() - this.lowBatterySince > LOW_BATTERY_MS && airborne(f))

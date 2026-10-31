@@ -117,6 +117,7 @@ function summarise(flights: FlightRecord[]) {
   const moves = all.filter((m): m is Extract<Measurement, { kind: 'move' }> => m.kind === 'move');
   const turns = all.filter((m): m is Extract<Measurement, { kind: 'turn' }> => m.kind === 'turn');
   const ends = all.filter((m): m is Extract<Measurement, { kind: 'end' }> => m.kind === 'end');
+  const dropouts = all.filter((m): m is Extract<Measurement, { kind: 'dropout' }> => m.kind === 'dropout');
   // How much of each move's target it flew (older saved results have no target: use what was asked).
   const movePct = moves.map((m) => (100 * m.movedCm) / (m.targetCm ?? m.askedCm));
   // Older saved results have no path samples.
@@ -125,6 +126,8 @@ function summarise(flights: FlightRecord[]) {
   return {
     flights: flights.length,
     completed: flights.filter((f) => f.outcome === 'completed').length,
+    dropouts: dropouts.length,
+    recovered: dropouts.filter((d) => d.recovered).length,
     moves: moves.length,
     moveAvgPct: avg(movePct),
     moveWorstPct: movePct.length ? movePct.reduce((w, p) => (Math.abs(p - 100) > Math.abs(w - 100) ? p : w)) : NaN,
@@ -153,7 +156,7 @@ function renderResults() {
     const s = summarise(flights);
     const td = (text: string, cls = '') => `<td class="${cls}">${text}</td>`;
     return (
-      `<tr>${td(label)}${td(`${s.completed}/${s.flights}`)}` +
+      `<tr>${td(label)}${td(`${s.completed}/${s.flights}${s.dropouts ? ` (${s.dropouts} dropout${s.dropouts > 1 ? 's' : ''}, ${s.recovered} recovered)` : ''}`)}` +
       td(s.moves ? `${r0(s.moveAvgPct)}% (worst ${r0(s.moveWorstPct)}%)` : '–', tone(Math.abs(s.moveWorstPct - 100), 10, 20)) +
       td(Number.isFinite(s.sideAvg) ? `${r0(s.sideAvg)} cm (worst ${r0(s.sideWorst)} cm)` : '–', tone(s.sideWorst, 5, 10)) +
       td(s.turns ? `${s.turnAvgErr >= 0 ? '+' : ''}${r1(s.turnAvgErr)}° (worst ${r0(s.turnWorstErr)}°)` : '–', tone(s.turnWorstErr, 3, 6)) +
@@ -180,7 +183,7 @@ function resultsText(): string {
   for (const name of [...new Set(results.map((r) => r.name))]) {
     const s = summarise(results.filter((r) => r.name === name));
     lines.push(
-      `${name}: ${s.completed}/${s.flights} completed; moves ${r0(s.moveAvgPct)}% of target (worst ${r0(s.moveWorstPct)}%); ` +
+      `${name}: ${s.completed}/${s.flights} completed; dropouts ${s.dropouts} (${s.recovered} recovered); moves ${r0(s.moveAvgPct)}% of target (worst ${r0(s.moveWorstPct)}%); ` +
         `max off the line ${r0(s.sideAvg)} cm (worst ${r0(s.sideWorst)} cm); ` +
         `turn error ${r1(s.turnAvgErr)}° (worst ${r0(s.turnWorstErr)}°); off course ${r1(s.courseAvgErr)}°; ` +
         `end point ${r0(s.endAvg)} cm off (worst ${r0(s.endWorst)} cm)`,
@@ -198,7 +201,9 @@ function resultsText(): string {
           ? `tn ${r0(m.turnedDeg)}/${m.askedDeg} crs ${r0(m.courseErrorDeg)}°`
           : m.kind === 'hover'
             ? `hv ${r1(m.seconds)}s drift fwd ${r0(m.forwardCm)} right ${r0(m.rightCm)}`
-            : `end ${r0(m.offCm)}cm (fwd ${r0(m.forwardCm)}, left ${r0(m.leftCm)})`,
+            : m.kind === 'dropout'
+              ? `DROPOUT ${r1(m.seconds)}s ${m.recovered ? 'recovered' : 'lost'}`
+              : `end ${r0(m.offCm)}cm (fwd ${r0(m.forwardCm)}, left ${r0(m.leftCm)})`,
     );
     lines.push(
       `${f.at} ${f.name} [${f.outcome}; cal ${f.calibration.overshootDeg.toFixed(1)}°/${f.calibration.moveRatio.toFixed(3)}]: ${parts.join('; ')}` +
