@@ -30,6 +30,8 @@ export class FakeDrone implements DroneLink {
   y = 0;
   /** Like the real drone, it keeps reporting "Moving" for a while after a turn. */
   settleMs = 800;
+  /** Share of each requested move actually travelled (the real drone stops a little short). */
+  travelRatio = 1;
   /** Extra rotation at the end of a turn, either method (as seen on hardware). */
   overshootDeg = 0;
   readonly turns: number[] = [];
@@ -145,8 +147,9 @@ export class FakeDrone implements DroneLink {
       this.later((Math.hypot(move.x, move.y) / v) * 1000, () => {
         // The move is relative to the heading (yaw: left +).
         const r = (this.yaw * Math.PI) / 180;
-        this.x += move.x * Math.cos(r) - move.y * Math.sin(r);
-        this.y += move.x * Math.sin(r) + move.y * Math.cos(r);
+        const k = this.travelRatio;
+        this.x += k * (move.x * Math.cos(r) - move.y * Math.sin(r));
+        this.y += k * (move.x * Math.sin(r) + move.y * Math.cos(r));
         this.movement = MOVEMENT.Hovering;
       });
     } else if (p.dataType === DataType.Control && d.length === 4) {

@@ -130,6 +130,31 @@ describe('DroneRunner', () => {
     expect(drone.y).toBeCloseTo(-0.1, 1);
   });
 
+  it('learns how short moves fall and asks for more', async () => {
+    // Like the hardware: the drone travels ~90 % of each move.
+    drone.travelRatio = 0.9;
+    const moved = (log: string[]) => log.filter((m) => m.startsWith('moved')).map((m) => Number(/moved (\d+) cm/.exec(m)![1]));
+    const first: string[] = [];
+    await settle(runner.run(parse(EXAMPLE_PROGRAM_XML), { onLog: (m) => first.push(m) }));
+    expect(moved(first)[0]).toBe(45);
+    for (let flight = 0; flight < 2; flight++) await settle(runner.run(parse(EXAMPLE_PROGRAM_XML)));
+    const last: string[] = [];
+    await settle(runner.run(parse(EXAMPLE_PROGRAM_XML), { onLog: (m) => last.push(m) }));
+    // A few flights later the 50 cm moves come out at ~49 cm, because it sends ~54 cm.
+    expect(moved(last)[0]).toBeGreaterThanOrEqual(48);
+    expect(last.find((m) => m.startsWith('moved'))).toMatch(/\(asked 50 cm, sent 5[3-6] cm\)/);
+    expect(runner.moveRatio).toBeGreaterThan(0.9);
+    expect(runner.moveRatio).toBeLessThan(0.95);
+  });
+
+  it('does not learn distances from an unusual move', async () => {
+    drone.travelRatio = 0.3;
+    const log: string[] = [];
+    await settle(runner.run([cmd.takeoff, cmd.forward(50), cmd.land], { onLog: (m) => log.push(m) }));
+    expect(log).toContain('(unusual move: not used to learn the distance)');
+    expect(runner.moveRatio).toBe(1);
+  });
+
   it('does not learn from an unusual turn', async () => {
     drone.overshootDeg = 25;
     const log: string[] = [];

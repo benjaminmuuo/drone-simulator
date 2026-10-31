@@ -97,6 +97,18 @@ const OVERSHOOT_LEARNING_RATE = 0.25;
 const HEADING_TIMEOUT_MS = 1200;
 const TURN_READING_MS = 200;
 const LOW_BATTERY_MS = 3000;
+/**
+ * Moves stop short of their target (measured: 50 cm moves logged 46–51 cm, moves after a turn
+ * 5–25 % short). The runner learns the ratio travelled / sent and asks for that much more.
+ * It starts at 1 (no assumption) and learns from moves of at least MIN_LEARN_MOVE_CM.
+ */
+const MIN_LEARN_MOVE_CM = 20;
+const MOVE_RATIO_LIMITS = { min: 0.75, max: 1.1 } as const;
+/** Samples outside this range (a bump, a drift) are not learned from. */
+const MOVE_SAMPLE_RANGE = { min: 0.5, max: 1.3 } as const;
+const MOVE_LEARNING_RATE = 0.25;
+/** Moves that drifted this far off direction are not learned from either. */
+const MAX_LEARN_OFF_DEG = 30;
 
 export type RunOutcome =
   | { readonly status: 'COMPLETED' }
@@ -146,6 +158,8 @@ export class DroneRunner {
   turnMethod: TurnMethod = 'drone-heading';
   /** Learned turn overshoot (°). Kept across flights while connected. */
   overshootDeg = INITIAL_OVERSHOOT_DEG;
+  /** Learned distance travelled / distance sent. Kept across flights while connected. */
+  moveRatio = 1;
   /** When the battery reading first dropped below landBattery (null while above). */
   private lowBatterySince: number | null = null;
   /**
@@ -261,7 +275,9 @@ export class DroneRunner {
         return this.wait(command.durationSeconds * 1000);
       case 'MOVE': {
         log(`→ ${command.direction.toLowerCase()} ${command.distanceCm} cm`);
-        const m = command.distanceCm / 100;
+        // Ask for a little more, by the shortfall learned so far.
+        const sentCm = command.distanceCm / this.moveRatio;
+        const m = sentCm / 100;
         const axes: Record<typeof command.direction, readonly [number, number]> = {
           FORWARD: [m, 0],
           BACKWARD: [-m, 0],
@@ -273,7 +289,9 @@ export class DroneRunner {
         if (moved) {
           const short = moved.cm < command.distanceCm * SHORT_MOVE_RATIO;
           const off = moved.offDeg === null ? '' : `, ${Math.round(Math.abs(moved.offDeg))}° ${moved.offDeg >= 0 ? 'left' : 'right'} of the expected direction`;
-          log(`${short ? '⚠ ' : ''}moved ${Math.round(moved.cm)} cm (asked ${command.distanceCm} cm)${off}`);
+          const sent = Math.round(sentCm) === command.distanceCm ? '' : `, sent ${Math.round(sentCm)} cm`;
+          log(`${short ? '⚠ ' : ''}moved ${Math.round(moved.cm)} cm (asked ${command.distanceCm} cm${sent})${off}`);
+          this.learnMoveRatio(moved, sentCm, log);
         }
         return;
       }
@@ -391,6 +409,17 @@ export class DroneRunner {
     } finally {
       this.pollPaused = false;
     }
+  }
+
+  private learnMoveRatio(moved: MoveReport, sentCm: number, log: (m: string) => void) {
+    if (sentCm < MIN_LEARN_MOVE_CM || (moved.offDeg !== null && Math.abs(moved.offDeg) > MAX_LEARN_OFF_DEG)) return;
+    const sample = moved.cm / sentCm;
+    if (sample < MOVE_SAMPLE_RANGE.min || sample > MOVE_SAMPLE_RANGE.max) {
+      log('(unusual move: not used to learn the distance)');
+      return;
+    }
+    const next = this.moveRatio + MOVE_LEARNING_RATE * (sample - this.moveRatio);
+    this.moveRatio = Math.max(MOVE_RATIO_LIMITS.min, Math.min(MOVE_RATIO_LIMITS.max, next));
   }
 
   /** Waits (State polling paused) until a fresh state says "Hovering"; carries on after SETTLE_MS. */

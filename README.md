@@ -108,7 +108,12 @@ past their target (more on a full battery). So the runner:
 - learns that overshoot as it flies, and aims each turn short by its estimate. The estimate is
   kept between flights while the drone is connected;
 - tracks where the program says the drone should face, and aims each turn at that heading. A small
-  error is corrected on the next turn instead of adding up. The fake drone in
+  error is corrected on the next turn instead of adding up.
+
+Moves also stop a little short (50 cm moves logged 46–51 cm, and moves after a turn were 5–25%
+short). The runner learns the ratio of distance travelled to distance sent, and asks for that much
+more, up to +30% (for example, it sends 53 cm for a 50 cm block). It learns from moves of 20 cm or
+more, ignores outliers, and keeps the estimate between flights while connected. The fake drone in
 `src/tests/fakeDrone.ts` behaves the same way.
 
 **Hardware test page.** `npm run dev`, then open `/spike/hardware.html`. It flies small test

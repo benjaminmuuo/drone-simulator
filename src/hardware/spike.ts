@@ -103,7 +103,7 @@ async function fly(name: string, commands: () => readonly DroneCommand[]) {
     return;
   }
   runner.turnMethod = ui.headingTurns.checked ? 'drone-heading' : 'yaw-loop';
-  log(`▶ ${name} (turns: ${runner.turnMethod}, learned overshoot ${runner.overshootDeg.toFixed(1)}°)`);
+  log(`▶ ${name} (turns: ${runner.turnMethod}, learned overshoot ${runner.overshootDeg.toFixed(1)}°, distance ratio ${runner.moveRatio.toFixed(2)})`);
   const started = Date.now();
   const run = runner.run(program, {
     onStep: (i, c) => log(`  [${i + 1}/${program.length}] ${describeCommand(c)}`),
