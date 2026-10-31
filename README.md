@@ -3,11 +3,12 @@
 A browser-based simulator for junior secondary students programming **CoDrone EDU** drones.
 Students build a flight program with Robolink-style blocks, right in the app, or import one
 exported from [Robolink Blockly](https://codrone.robolink.com/edu/blockly/). They press **Run**
-to watch the expected flight through a 3D course that matches the one laid out in class, before
-flying the real drone.
+to watch the expected flight through a 3D course that matches the one laid out in class. Once the
+simulation passes, they can plug in the drone's controller with USB and **fly the same program on
+the real drone** (see [Flying the real drone](#flying-the-real-drone)).
 
-> It does not talk to a physical drone. It shows the *expected* movement of a program. Wind,
-> battery, sensors and real physics are not modelled.
+> The simulator shows the *expected* movement of a program. Wind, battery, sensors and real physics
+> are not modelled, so the real flight can drift from it.
 
 The flight is shown in 3D, which needs a browser with WebGL. Without WebGL, the page explains the
 problem, and the editor, flight plan, telemetry and mission result still work.
@@ -59,6 +60,60 @@ npm run preview    # serve the production build
 ```
 
 No backend is needed; `dist/` is a static site.
+
+## Flying the real drone
+
+Works in Chrome, Edge and Brave on a computer (it uses the [Web Serial API](https://developer.mozilla.org/docs/Web/API/Web_Serial_API)).
+Other browsers explain this and still offer **Download**. There is still no backend: the page talks
+to the CoDrone EDU controller over USB directly, like Robolink Blockly does.
+
+1. Plug the controller in, turn the drone on, and press **Connect drone** in the *Real drone* panel.
+   The browser asks which device to use. Pick the controller ("STM32 Virtual ComPort"). Only one
+   tab or program can use it at a time, so close Robolink Blockly first.
+2. **Fly real drone** is enabled only when:
+   - the simulator says *Mission complete* for this program and course,
+   - the drone answers, is on the ground and ready, and has at least 30% battery,
+   - the program starts with take off and no single move is longer than 500 cm.
+
+   Otherwise the panel lists what's missing.
+3. A safety checklist comes next (area clear, drone on its start mark). Then **Fly now**.
+4. While flying, the block being flown is highlighted in the editor and the flight plan.
+   - **Land now** lands gently.
+   - **STOP**, or the **Space** key, cuts the motors at once.
+   - The drone also lands by itself if a step times out, the drone stops answering, the battery
+     reads below 15% for 3 seconds, or the tab is hidden or closed.
+
+**Code** (`src/hardware/`):
+
+| File | What it does |
+|---|---|
+| `protocol.ts` | The CoDrone EDU packet format (`0A 55`, header, payload, CRC-16/XMODEM), packet builders and an incremental decoder. Pure, unit-tested against golden bytes. |
+| `SerialLink.ts` | Opens the controller at 57600 baud (USB vendor `0x0483`) and turns the byte stream into packets. |
+| `DroneRunner.ts` | Flies a `DroneCommand[]`, the same list the simulator checks: one command at a time, each confirmed by the drone's reported state. Also does the preflight checks and the land/stop paths. |
+| `useRealDrone.ts` | React hook: connection, live status and battery, the flight, the Space key and leaving the page. |
+
+Timings and control loops follow Robolink's open-source `codrone-edu` Python library (v2.11):
+- **Moves:** relative position moves at 0.5 m/s.
+- **Turns:** a yaw feedback loop that reads the drone's heading.
+
+**Measured on the hardware:** the controller holds only **one** unanswered request at a time, and
+a newer request replaces it. So status polling pauses during turns, and heading requests are resent
+until answered. Also, right after a turn the drone keeps reporting "Moving" while it steadies,
+and a move sent then can be skipped. So each move first waits for a fresh "Hovering", then resends
+until the drone reports "Moving". The drone's position is read before and after each move, and the
+log shows how far it really went. Turns are flown by the drone's own heading control: one position
+command with a heading change. The yaw-stick feedback loop from `codrone-edu` also works and is
+kept as an option, but it depends on a fast stream of heading replies. Either way, turns ended 2–9°
+past their target (more on a full battery). So the runner:
+- learns that overshoot as it flies, and aims each turn short by its estimate. The estimate is
+  kept between flights while the drone is connected;
+- tracks where the program says the drone should face, and aims each turn at that heading. A small
+  error is corrected on the next turn instead of adding up. The fake drone in
+`src/tests/fakeDrone.ts` behaves the same way.
+
+**Hardware test page.** `npm run dev`, then open `/spike/hardware.html`. It flies small test
+programs (single moves, single turns, the U-turn example) or pasted Blockly XML, and shows raw
+state and packet logs. It is not part of the production build.
 
 ## How a program flows through the app
 

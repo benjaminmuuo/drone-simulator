@@ -9,7 +9,9 @@ import { Icon, LogoMark } from '../components/Icon';
 import { MissionFeedback } from '../components/MissionFeedback';
 import { ProgramPanel } from '../components/ProgramPanel';
 import type { ImportFailure } from '../components/ProgramPanel';
+import { RealDronePanel } from '../components/RealDronePanel';
 import { TransportBar } from '../components/TransportBar';
+import { useRealDrone } from '../hardware/useRealDrone';
 import { useSimulation } from '../hooks/useSimulation';
 import type { PlaybackPhase } from '../hooks/useSimulation';
 import { DEFAULT_MAZE, MAZES, findMaze } from '../mazes';
@@ -182,6 +184,7 @@ export function App() {
   const parsed = useMemo(() => (program ? parseRobolinkXml(program.xml) : null), [program]);
   const commands = parsed?.ok ? parsed.commands : null;
   const sim = useSimulation(commands, maze, flightHeightCm);
+  const drone = useRealDrone();
   const measureMessage = measureText(measureMode, measureState);
 
   const loadIntoEditor = useCallback((xml: string) => setLoadRequest((r) => ({ xml, nonce: (r?.nonce ?? 0) + 1 })), []);
@@ -291,6 +294,17 @@ export function App() {
   const editorReady = !editorFailed && program !== null;
   const onShowBlock = editorReady ? showBlock : null;
 
+  // A real flight takes over the block highlight and the flight plan.
+  const realFlight = drone.flight.phase === 'flying' ? drone.flight : null;
+  const realActive = realFlight?.activeIndex ?? null;
+  const realActiveCommand = realFlight && realActive !== null ? realFlight.commands[realActive] : undefined;
+  // Rehearse first: only a program that passes the simulation may fly for real.
+  const flyBlockers = !commands
+    ? ['Fix the problems in your program first.']
+    : result?.status !== 'SUCCESS'
+      ? ['This program fails in the simulator. Fix it until the simulation says “Mission complete”.']
+      : [];
+
   const crashed = failureShown && failure.contactPoint !== undefined;
   const flightLabel = crashed
     ? 'Crashed'
@@ -323,7 +337,13 @@ export function App() {
         <BlocklyEditor
           loadRequest={loadRequest}
           focusRequest={focusRequest}
-          activeBlockId={phase === 'running' || phase === 'paused' ? (activeCommand?.blockId ?? null) : null}
+          activeBlockId={
+            realFlight
+              ? (realActiveCommand?.blockId ?? null)
+              : phase === 'running' || phase === 'paused'
+                ? (activeCommand?.blockId ?? null)
+                : null
+          }
           failedBlockId={failureShown ? failure.blockId : null}
           failedMessage={failureShown ? failure.message : null}
           onChange={handleEditorChange}
@@ -346,7 +366,7 @@ export function App() {
           <Icon name="info" />
           <span>
             Shows the <strong>expected</strong> flight. Real drones can drift with battery, sensors and air, so always fly
-            carefully.
+            carefully. When the simulation passes, you can fly the real drone over USB.
           </span>
         </p>
       </header>
@@ -566,7 +586,7 @@ export function App() {
 
             <TransportBar
               phase={phase}
-              canRun={commands !== null && !launching}
+              canRun={commands !== null && !launching && !realFlight}
               launching={launching}
               speed={sim.speed}
               elapsed={sim.elapsed}
@@ -585,13 +605,19 @@ export function App() {
             />
 
             {phase === 'finished' && result && <MissionFeedback result={result} onShowBlock={onShowBlock} />}
+
+            <RealDronePanel drone={drone} commands={commands} blockers={flyBlockers} onShowBlock={onShowBlock} />
           </section>
-          <FlightPlan
-            commands={steps}
-            activeIndex={activeIndex}
-            completedCount={playing ? frame.completedSteps : 0}
-            failedIndex={failedIndex}
-          />
+          {realFlight ? (
+            <FlightPlan commands={realFlight.commands} activeIndex={realActive} completedCount={realActive ?? 0} failedIndex={null} />
+          ) : (
+            <FlightPlan
+              commands={steps}
+              activeIndex={activeIndex}
+              completedCount={playing ? frame.completedSteps : 0}
+              failedIndex={failedIndex}
+            />
+          )}
         </div>
       </main>
 

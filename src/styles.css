@@ -1341,3 +1341,111 @@ code {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- Real drone (USB) ---------- */
+.real-drone {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 20px 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--gray-25);
+}
+.real-drone__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.real-drone__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+.real-drone__battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.real-drone__battery--low {
+  color: var(--danger);
+  font-weight: 600;
+}
+.real-drone__disconnect {
+  margin-left: auto;
+}
+.real-drone__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+}
+.real-drone__text {
+  flex: 1 1 220px;
+  margin: 0;
+  color: var(--text-2);
+}
+.real-drone__keys {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.real-drone__reasons {
+  flex: 1 1 220px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+}
+.real-drone__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: #7a4a05;
+  box-shadow: inset 0 0 0 1px rgba(220, 138, 14, 0.25);
+}
+.real-drone__confirm ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.real-drone__result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--gray-100);
+  color: var(--text-2);
+}
+.real-drone__result > span {
+  flex: 1 1 200px;
+}
+.real-drone__result--ok {
+  background: var(--success-soft);
+  color: #0b5d3f;
+}
+.real-drone__result--error {
+  background: var(--danger-soft);
+  color: #7d1a1f;
+}
+.btn--stop {
+  background: var(--danger);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.btn--stop:hover:not(:disabled) {
+  background: #cc3a3f;
+}

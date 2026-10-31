@@ -69,6 +69,26 @@ const PATHS = {
       <path d="m6.3 6.3 2.1 2.1M15.6 15.6l2.1 2.1M6.3 17.7l2.1-2.1M15.6 8.4l2.1-2.1" />
     </>
   ),
+  plug: (
+    <>
+      <path d="M9 3v5M15 3v5" />
+      <path d="M6 8h12v3a6 6 0 0 1-12 0Z" />
+      <path d="M12 17v4" />
+    </>
+  ),
+  stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+  battery: (
+    <>
+      <rect x="3" y="7.5" width="16" height="9" rx="2" />
+      <path d="M22 11v2" />
+    </>
+  ),
+  land: (
+    <>
+      <path d="M12 4v10M8 10l4 4 4-4" />
+      <path d="M5 20h14" />
+    </>
+  ),
   plus: <path d="M12 5v14M5 12h14" />,
   minus: <path d="M5 12h14" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,

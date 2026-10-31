@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hardware Test</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { max-width: 760px; margin: 24px auto; padding: 0 16px; background: Canvas; color: CanvasText; }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; align-items: center; }
+      #programs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+      button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #8886; cursor: pointer; text-align: left; }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      #abort { background: #f57c00; color: #fff; border: none; font-weight: 600; padding: 14px 20px; }
+      #stop { background: #d32f2f; color: #fff; border: none; font-weight: 700; font-size: 1.2rem; padding: 14px 24px; }
+      .status { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-variant-numeric: tabular-nums; }
+      .warn { padding: 10px 12px; border-radius: 8px; background: #ffb30022; border: 1px solid #ffb30088; }
+      textarea { width: 100%; box-sizing: border-box; height: 70px; font: 12px ui-monospace, monospace; }
+      #log { height: 320px; overflow: auto; font: 12px ui-monospace, monospace; background: #8881; padding: 8px; border-radius: 8px; white-space: pre; }
+      h2 { font-size: 1.05rem; margin: 20px 0 6px; }
+    </style>
+  </head>
+  <body>
+    <h1>CoDrone EDU hardware test</h1>
+    <p class="warn">
+      Test page, not part of the app. Fly in a clear area of at least 2 × 2 m, with everyone standing back.
+      <b>Abort</b> lands gently. <b>STOP</b> (or the Space key) cuts the motors at once, so the drone drops.
+    </p>
+    <p id="unsupported" class="warn" hidden>Web Serial is not available. Open this page in Chrome, Edge or Brave on a computer.</p>
+
+    <div class="row">
+      <button id="connect">Connect controller</button>
+      <button id="disconnect" disabled>Disconnect</button>
+      <label><input type="checkbox" id="raw" /> log raw bytes (without polling)</label>
+    </div>
+
+    <div class="status">
+      <span>Link</span><b id="s-link">Not connected</b>
+      <span>System</span><b id="s-system">–</b>
+      <span>Flight / movement</span><b id="s-flight">–</b>
+      <span>Battery</span><b id="s-battery">–</b>
+      <span>Rejected packets</span><b id="s-rejected">–</b>
+    </div>
+
+    <h2>Test programs (top to bottom)</h2>
+    <p class="row">
+      <label><input type="checkbox" id="heading-turns" checked /> Turn with the drone's own heading control (untick for the yaw-stick loop)</label>
+    </p>
+    <div id="programs"></div>
+
+    <h2>Or paste Robolink Blockly XML</h2>
+    <textarea id="xml" placeholder="&lt;xml xmlns=&quot;https://developers.google.com/blockly/xml&quot;&gt;…"></textarea>
+    <div class="row"><button id="run-xml" disabled>Fly pasted program</button></div>
+
+    <div class="row">
+      <button id="abort" disabled>Abort (land)</button>
+      <button id="stop" disabled>STOP motors (Space)</button>
+    </div>
+
+    <div id="log"></div>
+    <script type="module" src="/src/hardware/spike.ts"></script>
+  </body>
+</html>
