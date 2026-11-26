@@ -20,7 +20,6 @@ export type FailureKind =
   | 'OUT_OF_BOUNDS'
   | 'TOO_LOW'
   | 'TOO_HIGH'
-  | 'WRONG_HEADING'
   | 'TOO_MANY_BLOCKS'
   | 'NOT_FLYING'
   | 'ALREADY_FLYING'

@@ -342,9 +342,11 @@ imports, but with **warnings**, so students can watch where it fails.
   fails at the Land block. Cones are markers to fly over, but a drone coming down on one can tip
   over or break a propeller.
 - The mission succeeds when every command runs, the drone ends **landed**, its centre is inside
-  the landing zone, and every checkpoint was passed within its radius. Some courses also check
-  that the drone **lands facing** a given way (`endHeadingDeg`), or allow at most a number of
-  **blocks between Take off and Land** (`maxBlocksBetween`; a block inside a loop counts once).
+  the landing zone, and every checkpoint was passed within its radius. **Open flights**
+  (`openLanding`: the Open Floor, the demos and the student moves) skip the landing-zone check, so
+  the drone may land anywhere on the floor; crashes, leaving the floor and the height limits still
+  count. A course can also allow at most a number of **blocks between Take off and Land**
+  (`maxBlocksBetween`; a block inside a loop counts once).
 
 ## Courses
 
@@ -361,20 +363,22 @@ and each has an **Example** solution:
 | | Lesson 6: Big square | from the middle of the bottom-right box, through the middle of each corner box: forward 176, left, 240, left, 176, left, 240, left, land |
 | Maze challenges | Maze 1: Zig-zag | start mark to finish pad around a box wall: right, right |
 | | Maze 2: Snake | a longer route: right, left, right, right |
-| Free flight | Open floor | no goal: practise anything, land back on the pad |
+| Free flight | Open floor | no goal: practise anything, land anywhere |
 | Flight words (instructor demo) | Demo 1: Throttle up / down | take off, up 30 cm, down 30 cm, land |
 | | Demo 2: Hover | take off, hover 3 s, land |
-| | Demo 3: Pitch forward | take off, forward 50 cm, land (pad 50 cm ahead) |
-| | Demo 4: Pitch backward | take off, backward 50 cm, land (pad 50 cm behind) |
+| | Demo 3: Pitch forward | take off, forward 50 cm, land |
+| | Demo 4: Pitch backward | take off, backward 50 cm, land |
 | | Demo 5: Roll | take off, right 50 cm, left 50 cm, land: slides without turning |
 | | Demo 6: Yaw | take off, turn right 90°, turn left 90°, land: turns without moving |
-| Student moves | Move 1: Up and down | take off, hover 5 s, land on the start mark |
-| | Move 2: Out and back | forward 50 cm, backward 50 cm, back onto the start mark |
-| | Move 3: Look around | four right turns of 90°; must land facing the way it started |
+| Student moves | Move 1: Up and down | take off, hover 5 s, land |
+| | Move 2: Out and back | forward 50 cm, backward 50 cm, land |
+| | Move 3: Look around | four right turns of 90° on the spot |
 | | Move 3 extension | the same with a Repeat 4 times loop |
-| | Move 4: Our own move | at most 5 blocks between Take off and Land, land anywhere on the floor |
+| | Move 4: Our own move | at most 5 blocks between Take off and Land |
 
-The demos and moves (`src/mazes/flightWords.ts`) are for Activities 5 and 6. In the instructor
+The demos and moves (`src/mazes/flightWords.ts`) are for Activities 5 and 6. They are **open
+flights**: there is no landing target, so students judge for themselves whether the drone did what
+they expected, and the pad only marks the start. In the instructor
 demo, pick a demo, press **Example**, ask *"What will the drone do?"*, then **Run**. The flight
 trail stays after the run, and **Reset** clears it before the next demo. They fly 50 cm moves from
 the middle of the empty floor, so they don't follow the grid-box rule below. The four Move 4 ideas

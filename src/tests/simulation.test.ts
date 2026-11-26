@@ -83,10 +83,12 @@ describe('lifecycle', () => {
     expect(simulate([takeoff, forward(10)], openField).failure?.kind).toBe('NOT_LANDED');
   });
 
-  it('fails when landing outside the landing zone', () => {
-    const result = simulate([takeoff, forward(100), land], openField);
+  it('fails when landing outside the landing zone, unless the course is an open flight', () => {
+    const withTarget = { ...openField, openLanding: false };
+    const result = simulate([takeoff, forward(100), land], withTarget);
     expect(result.failure?.kind).toBe('LANDED_OUTSIDE_ZONE');
     expect(result.finalState).toMatchObject({ x: 150, y: 10, flight: 'LANDED' });
+    expect(simulate([takeoff, forward(100), land], openField).failure).toBeNull();
   });
 
   it('fails an empty program', () => {

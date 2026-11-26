@@ -165,16 +165,17 @@ describe('Flight words and student moves', () => {
     expect(yaw[1]!.after.headingDeg).toBe(90);
   });
 
-  it('demos 3 and 4 land ahead of and behind the start, so landing on the start fails', () => {
-    expect(fly('demo-pitch-forward', [['hover', 1]]).failure?.kind).toBe('LANDED_OUTSIDE_ZONE');
-    expect(fly('demo-pitch-backward', [['forward', 50]]).failure?.kind).toBe('LANDED_OUTSIDE_ZONE');
+  it.each(FLIGHT_WORDS.map((m) => [m.name, m.id] as const))('%s is an open flight: it can land anywhere, facing any way', (_name, id) => {
+    expect(fly(id, [['forward', 80], ['turn-right', 90], ['right', 100]]).failure).toBeNull();
   });
 
-  it('Move 3 must land facing the way it started', () => {
-    expect(fly('move-look-around', [['turn-right', 90], ['turn-right', 90], ['turn-right', 90]]).failure).toMatchObject({
-      kind: 'WRONG_HEADING',
-      message: expect.stringContaining('90° to the left'),
-    });
+  it('open flights still fail on leaving the floor', () => {
+    expect(fly('demo-hover', [['forward', 200]]).failure?.kind).toBe('OUT_OF_BOUNDS');
+  });
+
+  it('Open Floor is an open flight too', () => {
+    const open = MAZES.find((m) => m.id === 'open-field')!;
+    expect(simulate(commands(programXml([['takeoff'], ['left', 100], ['land']])), open).failure).toBeNull();
   });
 
   it('Move 3 with a loop flies exactly the same as Move 3 written out', () => {

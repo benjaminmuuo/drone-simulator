@@ -7,6 +7,8 @@ import type { MazeDefinition } from './types';
  * Activity 5 (instructor demo: flight words in code) and Activity 6 (student moves).
  * All fly on the empty 300 × 220 cm floor from its middle, with 50 cm moves, so nothing
  * comes near the floor edge. Each course's Example button loads the program from the lesson.
+ * They are open flights: the drone may land anywhere, and students judge for themselves
+ * whether it did what they expected (the pad only marks the start).
  */
 
 const START = { x: 150, y: 110 } as const;
@@ -19,9 +21,9 @@ const openFloor = {
   noFlyZones: [],
   checkpoints: [],
   droneRadiusCm: DRONE_RADIUS_CM,
+  landingZone: padAt(START.x, START.y),
+  openLanding: true,
 } as const;
-/** Lands back on the start mark. */
-const ON_START = padAt(START.x, START.y);
 
 const course = (
   id: string,
@@ -34,7 +36,6 @@ const course = (
   id,
   name,
   description,
-  landingZone: ON_START,
   exampleXml: programXml([['takeoff'], ...steps, ['land']]),
   ...extra,
 });
@@ -53,21 +54,18 @@ export const FLIGHT_WORD_DEMOS: readonly MazeDefinition[] = [
     'Demo 3: Pitch forward',
     'Take off, fly forward 50 cm, land. Students should see it move forward and land ahead of the start.',
     [['forward', 50]],
-    { landingZone: padAt(START.x, START.y - 50) },
   ),
   course(
     'demo-pitch-backward',
     'Demo 4: Pitch backward',
     'Take off, fly backward 50 cm, land. Students should see it move backward.',
     [['backward', 50]],
-    { landingZone: padAt(START.x, START.y + 50) },
   ),
   course(
     'demo-roll',
     'Demo 5: Roll',
     'Take off, fly right 50 cm, fly left 50 cm, land. Students should see it slide sideways and back, without turning.',
     [['right', 50], ['left', 50]],
-    { endHeadingDeg: 0 },
   ),
   course(
     'demo-yaw',
@@ -75,7 +73,6 @@ export const FLIGHT_WORD_DEMOS: readonly MazeDefinition[] = [
     'Take off, turn right 90°, turn left 90°, land. Students should see it turn on the spot, without moving. ' +
       'Ask: what is the difference between roll and yaw?',
     [['turn-right', 90], ['turn-left', 90]],
-    { endHeadingDeg: 0 },
   ),
 ];
 
@@ -98,7 +95,6 @@ export const STUDENT_MOVES: readonly MazeDefinition[] = [
     'Move 3: Look around',
     'Take off, turn right 90° four times, land. It should spin a full circle on the spot and land facing the way it started.',
     [['turn-right', 90], ['turn-right', 90], ['turn-right', 90], ['turn-right', 90]],
-    { endHeadingDeg: 0 },
   ),
   course(
     'move-look-around-loop',
@@ -106,15 +102,14 @@ export const STUDENT_MOVES: readonly MazeDefinition[] = [
     'The same full circle, built with a Repeat 4 times loop around one turn right 90° block. ' +
       'Which version is shorter? Which is easier to change?',
     [['repeat', 4, [['turn-right', 90]]]],
-    { endHeadingDeg: 0 },
   ),
   course(
     'move-our-own',
     'Move 4: Our own move',
-    'Design your own move: up to 5 blocks between Take off and Land, and land anywhere on the floor. ' +
+    'Design your own move: up to 5 blocks between Take off and Land, in the open space. ' +
       'Ideas: step and look, side step, lift and spin, corner.',
     [['forward', 50], ['turn-right', 90], ['hover', 3]],
-    { landingZone: { x: 0, y: 0, width: ARENA.widthCm, height: ARENA.heightCm }, maxBlocksBetween: 5 },
+    { maxBlocksBetween: 5 },
   ),
 ];
 

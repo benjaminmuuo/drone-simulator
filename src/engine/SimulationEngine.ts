@@ -206,21 +206,12 @@ export class SimulationEngine {
         `Your move has ${this.blocksBetween} blocks between Take off and Land. The rule is at most ${limit}: take some out.`,
       );
     }
-    if (!rectContainsPoint(this.maze.landingZone, this.state)) {
+    if (!this.maze.openLanding && !rectContainsPoint(this.maze.landingZone, this.state)) {
       return end('LANDED_OUTSIDE_ZONE', 'The drone landed safely, but not inside the green landing zone.');
     }
     const missed = this.maze.checkpoints.filter((cp) => !this.visited.has(cp.id));
     if (missed.length > 0) {
       return end('CHECKPOINT_MISSED', `The drone landed, but missed: ${missed.map((cp) => cp.label).join(', ')}.`);
-    }
-    const facing = this.maze.endHeadingDeg;
-    if (facing !== undefined && normalizeHeading(this.state.headingDeg) !== normalizeHeading(facing)) {
-      const off = normalizeHeading(this.state.headingDeg - facing);
-      const side = off <= 180 ? `${off}° to the right` : `${360 - off}° to the left`;
-      return end(
-        'WRONG_HEADING',
-        `The drone landed on the pad, but turned ${side} of the way it should face. Add or change a turn so it ends facing the way it started.`,
-      );
     }
     return null;
   }
