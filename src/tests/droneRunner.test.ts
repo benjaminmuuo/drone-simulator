@@ -22,6 +22,7 @@ const cmd = {
   hover: (s: number): DroneCommand => ({ type: 'HOVER', durationSeconds: s, blockId: 'h' }),
   forward: (cm: number): DroneCommand => ({ type: 'MOVE', direction: 'FORWARD', distanceCm: cm, blockId: 'm' }),
   turn: (direction: 'LEFT' | 'RIGHT', degrees: number): DroneCommand => ({ type: 'TURN', direction, degrees, blockId: 't' }),
+  vertical: (direction: 'UP' | 'DOWN', cm: number): DroneCommand => ({ type: 'VERTICAL', direction, distanceCm: cm, blockId: 'v' }),
 } as const satisfies Record<string, DroneCommand | ((...args: never[]) => DroneCommand)>;
 
 /** Advances fake time until the promise settles. */
@@ -288,6 +289,25 @@ describe('DroneRunner', () => {
     drone.z = 1;
     await settle(second);
     expect(drone.events.some((e) => e.startsWith('HEIGHT'))).toBe(false);
+  });
+
+  it('flies up and down blocks straight up and down, and holds the new height afterwards', async () => {
+    runner.holdHeight = true;
+    drone.z = 0.8;
+    const outcome = await settle(runner.run([cmd.takeoff, cmd.hover(2), cmd.vertical('UP', 30), cmd.hover(2), cmd.vertical('DOWN', 50), cmd.hover(2), cmd.land]));
+    expect(outcome).toEqual({ status: 'COMPLETED' });
+    // Only the two moves: the hovers after them don't pull the drone back to the first height.
+    expect(drone.events.filter((e) => e.startsWith('HEIGHT'))).toEqual(['HEIGHT 0.30', 'HEIGHT -0.50']);
+    expect(drone.moves).toEqual([]);
+  });
+
+  it('refuses up and down moves that are too long, or go too far from the take-off height', () => {
+    drone.flight = FLIGHT.Ready;
+    const problems = (cs: DroneCommand[]) => runner.preflight([cmd.takeoff, ...cs, cmd.land]);
+    expect(problems([cmd.vertical('UP', 30), cmd.vertical('DOWN', 30)])).toEqual([]);
+    expect(problems([cmd.vertical('UP', RUNNER_LIMITS.maxVerticalCm + 10)]).join(' ')).toMatch(/at most 100 cm per up or down move/);
+    expect(problems([cmd.vertical('UP', 40), cmd.vertical('UP', 40)])).toEqual([expect.stringMatching(/^Block 3 takes the drone 80 cm above/)]);
+    expect(problems([cmd.vertical('DOWN', 50)])).toEqual([expect.stringMatching(/50 cm below its take-off height/)]);
   });
 
   it('limits each height correction and their total', () => {

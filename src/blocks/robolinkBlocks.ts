@@ -21,6 +21,8 @@ const ICONS = {
   hover: icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   move: icon('<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>'),
   turn: icon('<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/>'),
+  vertical: icon('<path d="M12 3v18"/><path d="m8 7 4-4 4 4"/><path d="m8 17 4 4 4-4"/>'),
+  repeat: icon('<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>'),
 } as const;
 
 const iconField = (src: string, alt: string) => ({ type: 'field_image', src, width: 16, height: 16, alt });
@@ -31,6 +33,8 @@ export const BLOCK_STYLE = {
   timing: 'timing_blocks',
   move: 'move_blocks',
   turn: 'turn_blocks',
+  vertical: 'vertical_blocks',
+  loop: 'loop_blocks',
   number: 'number_blocks',
 } as const;
 
@@ -77,6 +81,38 @@ export const BLOCK_DEFINITIONS: readonly object[] = [
     tooltip: 'Fly in a straight line without turning. Left and right slide sideways.',
   },
   {
+    // Only this app has it: Robolink Blockly cannot open a program that uses it.
+    type: 'go_vertical',
+    message0: '%1 go %2 %3 %4',
+    args0: [
+      iconField(ICONS.vertical, 'Go up or down'),
+      {
+        type: 'field_dropdown',
+        name: 'TYPE',
+        options: [
+          ['up', 'Direction.UP'],
+          ['down', 'Direction.DOWN'],
+        ],
+      },
+      { type: 'input_value', name: 'NUM0', check: 'Number' },
+      { type: 'field_dropdown', name: 'UNIT', options: [['cm', 'cm']] },
+    ],
+    ...statement,
+    style: BLOCK_STYLE.vertical,
+    tooltip: 'Fly straight up or down (throttle), without moving sideways or turning.',
+  },
+  {
+    // Blockly's standard loop block, with the same type, input names and number shadow.
+    type: 'controls_repeat_ext',
+    message0: '%1 repeat %2 times',
+    args0: [iconField(ICONS.repeat, 'Repeat'), { type: 'input_value', name: 'TIMES', check: 'Number' }],
+    message1: 'do %1',
+    args1: [{ type: 'input_statement', name: 'DO' }],
+    ...statement,
+    style: BLOCK_STYLE.loop,
+    tooltip: 'Run the blocks inside this many times.',
+  },
+  {
     type: 'turn_direction_degrees',
     message0: '%1 turn %2 %3 degrees',
     args0: [
@@ -109,11 +145,22 @@ export const BLOCK_DEFINITIONS: readonly object[] = [
       ['only_positive_decimal', 0, undefined],
       ['only_positive_decimal_50', 50, undefined],
       ['limit_0_To_360', 90, 360],
+      ['math_number', 4, 20],
     ] as const
   ).map(([type, value, max]) => ({
     type,
     message0: '%1',
-    args0: [{ type: 'field_number', name: 'NUM', value, min: 0, ...(max !== undefined ? { max } : {}) }],
+    args0: [
+      {
+        type: 'field_number',
+        name: 'NUM',
+        value,
+        min: 0,
+        ...(max !== undefined ? { max } : {}),
+        // Loop counts are whole numbers.
+        ...(type === 'math_number' ? { precision: 1 } : {}),
+      },
+    ],
     output: 'Number',
     style: BLOCK_STYLE.number,
   })),
@@ -126,6 +173,12 @@ const go = (direction: string, cm: number) => ({
   fields: { TYPE: `Direction.${direction}`, UNIT: 'cm' },
   inputs: { NUM0: number('only_positive_decimal_50', cm) },
 });
+const vertical = (direction: string, cm: number) => ({
+  kind: 'block',
+  type: 'go_vertical',
+  fields: { TYPE: `Direction.${direction}`, UNIT: 'cm' },
+  inputs: { NUM0: number('only_positive_decimal_50', cm) },
+});
 const turn = (direction: string, degrees: number) => ({
   kind: 'block',
   type: 'turn_direction_degrees',
@@ -134,7 +187,7 @@ const turn = (direction: string, degrees: number) => ({
 });
 
 /** Category colours (match the block styles in the editor theme). */
-export const CATEGORY_COLOURS = { flight: '#0f9f74', move: '#3466e8', turn: '#7a55e0' } as const;
+export const CATEGORY_COLOURS = { flight: '#0f9f74', move: '#3466e8', vertical: '#0e8fb3', turn: '#7a55e0', loop: '#c2410c' } as const;
 
 /**
  * Block palette: a slim rail of categories (like Robolink Blockly). Clicking
@@ -164,16 +217,30 @@ export const TOOLBOX = {
     },
     {
       kind: 'category',
+      name: 'Up/Down',
+      colour: CATEGORY_COLOURS.vertical,
+      cssConfig: { row: 'blocklyToolboxCategory toolbox-cat toolbox-cat--vertical', icon: 'toolbox-cat__icon' },
+      contents: [vertical('UP', 30), vertical('DOWN', 30)],
+    },
+    {
+      kind: 'category',
       name: 'Turn',
       colour: CATEGORY_COLOURS.turn,
       cssConfig: { row: 'blocklyToolboxCategory toolbox-cat toolbox-cat--turn', icon: 'toolbox-cat__icon' },
       contents: [turn('RIGHT', 90), turn('LEFT', 90)],
     },
+    {
+      kind: 'category',
+      name: 'Loop',
+      colour: CATEGORY_COLOURS.loop,
+      cssConfig: { row: 'blocklyToolboxCategory toolbox-cat toolbox-cat--loop', icon: 'toolbox-cat__icon' },
+      contents: [{ kind: 'block', type: 'controls_repeat_ext', inputs: { TIMES: number('math_number', 4) } }],
+    },
   ],
 };
 
 /** Every block offered in the palette (for tests and docs). */
-export const PALETTE_BLOCKS = TOOLBOX.contents.flatMap((category) => category.contents);
+export const PALETTE_BLOCKS = TOOLBOX.contents.flatMap((category): ReadonlyArray<{ readonly type: string }> => category.contents);
 
 /** A new program: take off, then land. */
 export const STARTER_PROGRAM_XML =

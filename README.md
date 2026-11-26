@@ -16,12 +16,16 @@ problem, and the editor, flight plan, telemetry and mission result still work.
 ## Block editor
 
 The editor (`src/components/BlocklyEditor.tsx`) is [Google Blockly](https://developers.google.com/blockly),
-the engine Robolink Blockly is built on. The five supported blocks (`src/blocks/robolinkBlocks.ts`)
-use **exactly** Robolink's block types, field names and number "shadow" types, so:
+the engine Robolink Blockly is built on. The five flight blocks (`src/blocks/robolinkBlocks.ts`)
+use **exactly** Robolink's block types, field names and number "shadow" types, and the Repeat block
+is Blockly's standard `controls_repeat_ext`, so:
 
 - **Import:** a Robolink `.xml` file opens in the editor and can be changed there. You can drop it
   on the editor or use the Import button.
 - **Download:** saves the program as Robolink XML, ready to open in Robolink Blockly and fly.
+  The exception is **go up / down** (`go_vertical`): it only exists in this app, because no Robolink
+  export with an up/down block has been seen. A program that uses it shows a note saying Robolink
+  Blockly can't open it; fly it on the real drone from this app instead.
 - **Checking:** every edit is turned into XML and checked by the same parser as an imported file.
   The flight plan, problem list and Run button update live. **Show block** jumps to the block a
   problem refers to.
@@ -32,7 +36,7 @@ use **exactly** Robolink's block types, field names and number "shadow" types, s
   **Example** loads the solution for the course that's selected.
 
 The palette is a slim category rail: Flight (take off, hover, land), Move (go forward /
-backward / left / right) and Turn. Clicking a category slides out its blocks, and the drawer
+backward / left / right), Up/Down (go up / down), Turn and Loop (repeat). Clicking a category slides out its blocks, and the drawer
 closes once a block is dragged out, so the full width stays free for building. On narrow screens
 the rail runs along the top.
 
@@ -80,7 +84,9 @@ to the CoDrone EDU controller over USB directly, like Robolink Blockly does.
    the panel and the safety checklist warn about it, but the student can still fly. It is enabled when:
    - the program has no errors,
    - the drone answers, is on the ground and ready, and has at least 30% battery,
-   - the program starts with take off and no single move is longer than 500 cm.
+   - the program starts with take off and no single move is longer than 500 cm,
+   - no up/down move is longer than 100 cm, and up/down moves never take the drone more than 70 cm
+     above or 40 cm below its take-off height.
 
    Otherwise the panel lists what's missing.
 3. A safety checklist comes next (area clear, drone on its start mark). Then **Fly now**.
@@ -111,7 +117,9 @@ tape-measured calibration in `src/hardware/floorCalibration.ts` (black surface, 
 drone travels about 1.49 × the distance sent), so *forward 160* sends 107 cm. It also hovers 3 s
 after take-off and 1.5 s before each turn. At the end of each hover it moves back towards the height
 of its first hover: errors under 5 cm are ignored, one correction is at most 20 cm, all corrections
-together at most 35 cm, and readings outside 25–150 cm are ignored. The simulator and downloaded `.xml` files keep the numbers
+together at most 35 cm, and readings outside 25–150 cm are ignored. A **go up / down** block moves
+the drone straight up or down by the distance written (no floor calibration: it was only measured
+for sideways moves), and the height hold then holds the new height. The simulator and downloaded `.xml` files keep the numbers
 as written, so a downloaded program flown from Robolink Blockly is **not** corrected and will go too far.
 
 **Code** (`src/hardware/`):
@@ -262,13 +270,16 @@ start.
 
 ### Flight height and real block heights
 
-Phase 1 has no altitude commands, so after takeoff the drone holds one height. Robolink does not
-publish a fixed takeoff height, so the **Flight height** setting (40–150 cm, default 80 cm) should
-be set to what your drones actually do. Measure it once with a tape measure.
+Take off climbs to the **Flight height** setting (40–150 cm, default 80 cm). Robolink does not
+publish a fixed takeoff height, so set it to what your drones actually do. Measure it once with a
+tape measure. **Go up / down** blocks then change the height from there. The 3D view, the trail and
+the **Height** readout follow it. The drone may fly from 20 cm (lower fails as *too low*: use Land)
+up to the 150 cm class limit (higher fails as *too high*).
 
-- A box **taller than flight height − 10 cm** blocks the drone. The 10 cm covers the drone's body
+- A box **taller than the drone's current height − 10 cm** blocks the drone. The 10 cm covers the drone's body
   and its hover wobble (`OBSTACLE_CLEARANCE_CM`). Lower boxes are flown over. For example, at
   80 cm the drone clears a single 40 cm box but hits an 80 cm stack.
+- After going up, the drone can fly over a taller box; it can't **go down** onto one.
 - The drone can never **land** on top of a box, whatever its height.
 - Red no-fly zones count at every height.
 
@@ -280,9 +291,9 @@ Random wind or drift is intentionally **not** simulated. With it, a correct prog
 random, which would hide the programming lesson. A seeded "real-world wobble" mode could be added
 later to show why real flights differ from the plan.
 
-## Supported Blockly blocks (Phase 1)
+## Supported Blockly blocks
 
-These were confirmed from a real Robolink export (`src/tests/fixtures/main.xml`):
+The first five were confirmed from a real Robolink export (`src/tests/fixtures/main.xml`):
 
 | Block type               | Fields / inputs                                                | Command                 |
 | ------------------------ | -------------------------------------------------------------- | ----------------------- |
@@ -291,6 +302,14 @@ These were confirmed from a real Robolink export (`src/tests/fixtures/main.xml`)
 | `hover`                  | `NUM0` (seconds, 0–300)                                        | `HOVER`                 |
 | `go_distance`            | `TYPE` = `Direction.FORWARD/BACKWARD/LEFT/RIGHT`, `UNIT` = `cm`, `NUM0` (0–10000) | `MOVE` |
 | `turn_direction_degrees` | `TYPE` = `Direction.LEFT/RIGHT`, `NUM0` (0–360)                | `TURN`                  |
+| `go_vertical` (this app only) | `TYPE` = `Direction.UP/DOWN`, `UNIT` = `cm`, `NUM0`        | `VERTICAL`              |
+| `controls_repeat_ext`    | `TIMES` (whole number, 0–20), statement `DO`                   | the `DO` blocks, written out `TIMES` times |
+| `controls_repeat`        | field `TIMES` (older Blockly), statement `DO`                  | the same                |
+
+A loop is written out when the program is read: Repeat 4 × *turn right 90°* becomes four `TURN`
+commands, each keeping the block ID of the one turn block, so the editor highlights it on every
+pass. Loops can sit inside loops up to 3 deep, and a program may write out to at most 1,000
+commands.
 
 Numeric inputs are read from the `<shadow>` default unless a real `<block>` is connected, in which
 case the connected block wins. Connected blocks must be plain number literals
@@ -299,9 +318,9 @@ else, such as arithmetic or variables, is reported as an **unsupported expressio
 never quietly falls back to the shadow value.
 
 The parser rejects, and reports with the block ID: malformed XML, DOCTYPEs, unsupported blocks,
-disabled blocks, loops, other nested statements and mutations, variables, missing fields, invalid
+disabled blocks, other loops and conditions, nested statements on blocks that aren't loops, mutations, variables, missing fields, invalid
 or out-of-range numbers, unknown units or directions, and multiple loose block stacks. Limits:
-256 KB file size, 5,000 XML elements, 500 program blocks.
+256 KB file size, 5,000 XML elements, 500 program blocks (counting blocks inside loops).
 
 A program in the wrong order (moving before takeoff, never landing, taking off twice) still
 imports, but with **warnings**, so students can watch where it fails.
@@ -323,11 +342,13 @@ imports, but with **warnings**, so students can watch where it fails.
   fails at the Land block. Cones are markers to fly over, but a drone coming down on one can tip
   over or break a propeller.
 - The mission succeeds when every command runs, the drone ends **landed**, its centre is inside
-  the landing zone, and every checkpoint was passed within its radius.
+  the landing zone, and every checkpoint was passed within its radius. Some courses also check
+  that the drone **lands facing** a given way (`endHeadingDeg`), or allow at most a number of
+  **blocks between Take off and Land** (`maxBlocksBetween`; a block inside a loop counts once).
 
 ## Courses
 
-The **Course** picker has three groups. Every course is laid out in the same 300 × 220 cm taped arena (5 × 5 grid boxes, each 60 cm along the length × 44 cm across the width; the drone starts facing across the width),
+The **Course** picker has five groups. Every course is laid out in the same 300 × 220 cm taped arena (5 × 5 grid boxes, each 60 cm along the length × 44 cm across the width; the drone starts facing across the width),
 and each has an **Example** solution:
 
 | Group | Course | Students practise |
@@ -341,15 +362,33 @@ and each has an **Example** solution:
 | Maze challenges | Maze 1: Zig-zag | start mark to finish pad around a box wall: right, right |
 | | Maze 2: Snake | a longer route: right, left, right, right |
 | Free flight | Open floor | no goal: practise anything, land back on the pad |
+| Flight words (instructor demo) | Demo 1: Throttle up / down | take off, up 30 cm, down 30 cm, land |
+| | Demo 2: Hover | take off, hover 3 s, land |
+| | Demo 3: Pitch forward | take off, forward 50 cm, land (pad 50 cm ahead) |
+| | Demo 4: Pitch backward | take off, backward 50 cm, land (pad 50 cm behind) |
+| | Demo 5: Roll | take off, right 50 cm, left 50 cm, land: slides without turning |
+| | Demo 6: Yaw | take off, turn right 90°, turn left 90°, land: turns without moving |
+| Student moves | Move 1: Up and down | take off, hover 5 s, land on the start mark |
+| | Move 2: Out and back | forward 50 cm, backward 50 cm, back onto the start mark |
+| | Move 3: Look around | four right turns of 90°; must land facing the way it started |
+| | Move 3 extension | the same with a Repeat 4 times loop |
+| | Move 4: Our own move | at most 5 blocks between Take off and Land, land anywhere on the floor |
+
+The demos and moves (`src/mazes/flightWords.ts`) are for Activities 5 and 6. In the instructor
+demo, pick a demo, press **Example**, ask *"What will the drone do?"*, then **Run**. The flight
+trail stays after the run, and **Reset** clears it before the next demo. They fly 50 cm moves from
+the middle of the empty floor, so they don't follow the grid-box rule below. The four Move 4 ideas
+from the lesson (step and look, side step, lift and spin, corner) are checked in
+`src/tests/courses.test.ts`.
 
 The layouts follow what flight tests with a real CoDrone EDU showed (`src/mazes/courseRules.ts`):
-- moves are whole grid boxes (44 cm forward, 60 cm sideways) and follow the grid lines, except Lesson 6, which runs through the box middles and passes as close as 22 cm to the floor edge;
+- in Flight School and the mazes, moves are whole grid boxes (44 cm forward, 60 cm sideways) and follow the grid lines, except Lesson 6, which runs through the box middles and passes as close as 22 cm to the floor edge;
 - landing pads are 50 × 50 cm, plenty for the drone's ±5 cm per move;
 - the route stays at least **40 cm** from every box wall and from the arena edge. That covers
   about 8 cm of drone radius, up to about 15 cm of drift over a course, and a margin.
 
 `src/tests/courses.test.ts` checks every course: it is valid, its Example completes it while keeping
-the 40 cm clearance, and "take off, land" alone can't pass it.
+the 40 cm clearance. For Flight School and the mazes it also checks that "take off, land" alone can't pass.
 
 Playback starts at **0.5×**, which looks closest to the real drone flying the same program.
 
@@ -378,7 +417,7 @@ Playback starts at **0.5×**, which looks closest to the real drone flying the s
    TypeScript's exhaustive `switch` statements will point out the places you miss.
 5. Add parser and simulation tests.
 
-Loops, conditions, variables, sensors and functions are deliberately unsupported until
+Other loops, conditions, variables, sensors and functions are deliberately unsupported until
 representative exported XML is available.
 
 ## Project layout
@@ -402,6 +441,10 @@ src/
 
 ## Assumptions not verifiable from the single sample
 
+- The Repeat block is Blockly's standard `controls_repeat_ext` with a `math_number` count. Robolink
+  Blockly is expected to use the same, but no Robolink export with a loop has been checked yet.
+- `go_vertical` is this app's own block. If Robolink's own up/down block is seen in an export, map
+  it to `VERTICAL` in `CommandMapper.ts`.
 - `Direction.BACKWARD`, `Direction.LEFT` and `Direction.RIGHT` for `go_distance`, and
   `Direction.LEFT` for turns, follow the naming pattern of the confirmed values.
 - Only the `cm` unit is accepted. Other units Blockly may offer are rejected with a clear message
@@ -413,5 +456,5 @@ src/
   Workspaces with several loose stacks are rejected as ambiguous.
 - The landing check uses the drone's centre point, and no-fly zones are checked against the drone's
   full body.
-- Playback speeds (40 cm/s, 75°/s turns, 1.2 s takeoff and landing at 1×) are only for display. At
+- Playback speeds (40 cm/s, 30 cm/s up and down, 75°/s turns, 1.2 s takeoff and landing at 1×) are only for display. At
   the default 0.5×, a program takes about as long as on a real CoDrone EDU.

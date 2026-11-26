@@ -76,7 +76,7 @@ describe('visual flight dynamics', () => {
 
   it('does not change the authoritative path', () => {
     // Heading 90° after the turn, so strafing left moves the drone up the arena.
-    expect(frameAt(timeline, timeline.totalSeconds).pose).toMatchObject({ x: 150, y: 10, altitude: 0 });
+    expect(frameAt(timeline, timeline.totalSeconds).pose).toMatchObject({ x: 150, y: 10, altitudeCm: 0 });
   });
 
   it('hover wobble is tiny, deterministic and absent on the ground', () => {

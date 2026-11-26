@@ -12,6 +12,10 @@ const TITLES: Record<FailureKind, string> = {
   LANDED_ON_CONE: 'Unsafe landing! The drone came down on a cone',
   CHECKPOINT_MISSED: 'A checkpoint was missed',
   EMPTY_PROGRAM: 'Nothing to run',
+  TOO_LOW: 'Too low! The drone would be too close to the floor',
+  TOO_HIGH: 'Too high! The drone would go above the class limit',
+  WRONG_HEADING: 'Landed facing the wrong way',
+  TOO_MANY_BLOCKS: 'Too many blocks for this move',
 };
 
 const TIPS: Record<FailureKind, string> = {
@@ -25,6 +29,10 @@ const TIPS: Record<FailureKind, string> = {
   LANDED_ON_CONE: 'Cones are markers to fly over, not to land on. Finish your route on the green H pad.',
   CHECKPOINT_MISSED: 'Make sure your route passes over every checkpoint cone.',
   EMPTY_PROGRAM: 'Add some blocks to your program.',
+  TOO_LOW: 'Use a smaller "go down" number, or a "land" block to come all the way down.',
+  TOO_HIGH: 'Use a smaller "go up" number, or add a "go down" first.',
+  WRONG_HEADING: 'Count your turns: four right turns of 90° make a full circle.',
+  TOO_MANY_BLOCKS: 'Keep it to 5 blocks between Take off and Land, or use a loop.',
 };
 
 interface Props {

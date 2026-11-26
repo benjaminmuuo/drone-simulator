@@ -5,6 +5,8 @@ const DIRECTION_WORDS = {
   BACKWARD: 'Backward',
   LEFT: 'Left',
   RIGHT: 'Right',
+  UP: 'Up',
+  DOWN: 'Down',
 } as const;
 
 function formatNumber(value: number): string {
@@ -23,6 +25,8 @@ export function describeCommand(command: DroneCommand): string {
       return `Hover — ${formatNumber(s)} ${s === 1 ? 'second' : 'seconds'}`;
     }
     case 'MOVE':
+      return `${DIRECTION_WORDS[command.direction]} — ${formatNumber(command.distanceCm)} cm`;
+    case 'VERTICAL':
       return `${DIRECTION_WORDS[command.direction]} — ${formatNumber(command.distanceCm)} cm`;
     case 'TURN':
       return `Turn ${command.direction.toLowerCase()} — ${formatNumber(command.degrees)}°`;

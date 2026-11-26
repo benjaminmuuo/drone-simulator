@@ -712,6 +712,15 @@ code {
 .notice--warning .notice__title {
   color: #7a4a05;
 }
+.notice--note {
+  gap: 2px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--gray-600, #475467);
+}
+.notice--note .notice__title {
+  color: #0a7090;
+}
 
 /* Category rail (Flight / Move / Turn): slim, quiet, colour-coded. */
 .blocklyToolbox {
@@ -764,6 +773,12 @@ code {
 }
 .toolbox-cat.toolbox-cat--turn {
   --cat: #7a55e0;
+}
+.toolbox-cat.toolbox-cat--vertical {
+  --cat: #0e8fb3;
+}
+.toolbox-cat.toolbox-cat--loop {
+  --cat: #c2410c;
 }
 .toolbox-cat.blocklyToolboxCategory:hover {
   background: var(--gray-100) !important;

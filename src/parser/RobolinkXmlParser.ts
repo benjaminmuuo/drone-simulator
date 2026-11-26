@@ -17,8 +17,10 @@ export const PARSER_LIMITS = {
   maxFileBytes: 256 * 1024,
   /** Total XML elements in the document. */
   maxElements: 5_000,
-  /** Executable blocks in the program stack. */
+  /** Executable blocks in the program stack, counting blocks inside loops. */
   maxBlocks: 500,
+  /** Loops inside loops: deeper nesting is refused. */
+  maxNesting: 3,
 } as const;
 
 /** Top-level elements that may legitimately appear next to the program. */
@@ -98,16 +100,18 @@ interface ReadStackResult {
 
 /**
  * Walks a top-level block and its `<next>` chain iteratively (so very long
- * programs cannot overflow the call stack).
+ * programs cannot overflow the call stack). Blocks inside a loop are read the
+ * same way, one level deeper; `count` is shared, so the block limit covers them too.
  */
-function readStack(first: Element): ReadStackResult {
+function readStack(first: Element, depth = 0, count = { blocks: 0 }): ReadStackResult {
   const blocks: RawBlock[] = [];
   const issues: ParseIssue[] = [];
   let current: Element | null = first;
 
   while (current !== null) {
-    if (blocks.length >= PARSER_LIMITS.maxBlocks) {
-      issues.push(
+    if (count.blocks >= PARSER_LIMITS.maxBlocks) {
+      // Reported once, by whichever stack (or loop body) reaches the limit first.
+      if (count.blocks++ === PARSER_LIMITS.maxBlocks) issues.push(
         issue(
           'TOO_COMPLEX',
           `This program has more than ${PARSER_LIMITS.maxBlocks} blocks, which is more than the simulator supports.`,
@@ -115,12 +119,14 @@ function readStack(first: Element): ReadStackResult {
       );
       break;
     }
+    count.blocks++;
 
     const type = current.getAttribute('type') ?? '';
     const id = current.getAttribute('id');
     const fields = readFields(current);
     const values = new Map<string, RawValueInput>();
     const statements: string[] = [];
+    const children = new Map<string, readonly RawBlock[]>();
     const unexpectedChildren: string[] = [];
     let next: Element | null = null;
 
@@ -137,7 +143,21 @@ function readStack(first: Element): ReadStackResult {
           values.set(name, input);
         }
       } else if (isBlocklyElement(child, 'statement')) {
-        statements.push(child.getAttribute('name') ?? '');
+        const name = child.getAttribute('name') ?? '';
+        statements.push(name);
+        const inner = childElements(child);
+        const innerFirst = inner[0];
+        if (inner.length > 1 || (innerFirst && !isBlocklyElement(innerFirst, 'block'))) {
+          issues.push(issue('UNEXPECTED_STRUCTURE', `The blocks inside "${type}" are not connected in a way the simulator understands.`, id, type));
+        } else if (innerFirst && depth + 1 > PARSER_LIMITS.maxNesting) {
+          issues.push(issue('TOO_COMPLEX', `Loops are nested more than ${PARSER_LIMITS.maxNesting} deep. Take one loop out.`, id, type));
+        } else if (innerFirst) {
+          const nested = readStack(innerFirst, depth + 1, count);
+          children.set(name, nested.blocks);
+          issues.push(...nested.issues);
+        } else {
+          children.set(name, []);
+        }
       } else if (isBlocklyElement(child, 'next')) {
         const nextChildren = childElements(child);
         const nextBlock = nextChildren[0];
@@ -165,6 +185,7 @@ function readStack(first: Element): ReadStackResult {
       fields,
       values,
       statements,
+      children,
       unexpectedChildren,
     });
     current = next;

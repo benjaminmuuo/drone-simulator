@@ -10,12 +10,18 @@ export interface DroneState {
   /** Normalised to [0, 360). 0 = up, 90 = right. */
   readonly headingDeg: number;
   readonly flight: FlightState;
+  /** Height above the floor: 0 when landed, the flight height after take off, changed by up/down. */
+  readonly heightCm: number;
 }
 
 export type FailureKind =
   | 'COLLISION_OBSTACLE'
   | 'NO_FLY_ZONE'
   | 'OUT_OF_BOUNDS'
+  | 'TOO_LOW'
+  | 'TOO_HIGH'
+  | 'WRONG_HEADING'
+  | 'TOO_MANY_BLOCKS'
   | 'NOT_FLYING'
   | 'ALREADY_FLYING'
   | 'NOT_LANDED'

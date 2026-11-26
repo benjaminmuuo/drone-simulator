@@ -11,6 +11,7 @@ import type {
   RawBlock,
   RawValueBlock,
   TurnDirection,
+  VerticalDirection,
 } from './types';
 
 /**
@@ -35,6 +36,11 @@ const MOVE_DIRECTIONS: Readonly<Record<string, MoveDirection>> = {
   'Direction.RIGHT': 'RIGHT',
 };
 
+const VERTICAL_DIRECTIONS: Readonly<Record<string, VerticalDirection>> = {
+  'Direction.UP': 'UP',
+  'Direction.DOWN': 'DOWN',
+};
+
 const TURN_DIRECTIONS: Readonly<Record<string, TurnDirection>> = {
   'Direction.LEFT': 'LEFT',
   'Direction.RIGHT': 'RIGHT',
@@ -44,7 +50,11 @@ export const PARAMETER_LIMITS = {
   hoverSeconds: { min: 0, max: 300 },
   distanceCm: { min: 0, max: 10_000 },
   turnDegrees: { min: 0, max: 360 },
+  repeatTimes: { min: 0, max: 20 },
 } as const;
+
+/** Commands a program may expand to once its loops are written out. */
+export const MAX_EXPANDED_COMMANDS = 1000;
 
 /** Human-friendly names used in error messages. */
 const BLOCK_LABELS: Readonly<Record<string, string>> = {
@@ -53,12 +63,18 @@ const BLOCK_LABELS: Readonly<Record<string, string>> = {
   hover: 'Hover',
   go_distance: 'Go (distance)',
   turn_direction_degrees: 'Turn (degrees)',
+  go_vertical: 'Go up / down',
+  controls_repeat_ext: 'Repeat',
+  controls_repeat: 'Repeat',
 };
 
 interface BlockSpec {
   readonly fields: readonly string[];
   readonly values: readonly string[];
-  readonly map: (block: RawBlock, ctx: MapContext) => DroneCommand | null;
+  /** Statement inputs (loop bodies) the block may hold. */
+  readonly statements?: readonly string[];
+  /** Commands for this block. `body` maps a statement input's blocks to commands. */
+  readonly map: (block: RawBlock, ctx: MapContext, body: (name: string) => DroneCommand[]) => DroneCommand | DroneCommand[] | null;
 }
 
 class MapContext {
@@ -93,7 +109,16 @@ class MapContext {
     if (!source) return null;
     const literal = this.literalText(source, what);
     if (literal === null) return null;
+    return this.checkNumber(literal, limits, what);
+  }
 
+  /** A number typed straight into a field (e.g. the older repeat block). */
+  fieldNumber(name: string, limits: { min: number; max: number }, what: string): number | null {
+    const text = this.field(name);
+    return text === null ? null : this.checkNumber(text, limits, what);
+  }
+
+  private checkNumber(literal: string, limits: { min: number; max: number }, what: string): number | null {
     const value = parseDecimal(literal);
     if (value === null) {
       return this.report('INVALID_NUMBER', `The ${this.label} block's ${what} "${literal}" is not a number.`);
@@ -138,6 +163,18 @@ export function parseDecimal(text: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+/** Writes a loop out: its body `times` times. Every copy keeps the body's block IDs. */
+function repeatBody(ctx: MapContext, times: number | null, body: DroneCommand[]): DroneCommand[] | null {
+  if (times === null) return null;
+  if (!Number.isInteger(times)) {
+    return ctx.report('INVALID_NUMBER', `The ${ctx.label} block's number of times is ${times}. Use a whole number.`);
+  }
+  if (body.length * times > MAX_EXPANDED_COMMANDS) {
+    return ctx.report('TOO_COMPLEX', `This loop would run more than ${MAX_EXPANDED_COMMANDS} blocks. Use fewer repeats.`);
+  }
+  return Array.from({ length: times }, () => body).flat();
+}
+
 const BLOCK_SPECS: Readonly<Record<string, BlockSpec>> = {
   takeoff: {
     fields: [],
@@ -180,6 +217,39 @@ const BLOCK_SPECS: Readonly<Record<string, BlockSpec>> = {
       return { type: 'MOVE', direction, distanceCm: amount * factor, blockId: block.id };
     },
   },
+  // Not a Robolink block (no Robolink export with up/down has been seen): only this app knows it.
+  go_vertical: {
+    fields: ['TYPE', 'UNIT'],
+    values: ['NUM0'],
+    map: (block, ctx) => {
+      const dirText = ctx.field('TYPE');
+      const unitText = ctx.field('UNIT');
+      const amount = ctx.number('NUM0', PARAMETER_LIMITS.distanceCm, 'distance');
+      const direction = dirText === null ? undefined : VERTICAL_DIRECTIONS[dirText];
+      if (dirText !== null && direction === undefined) {
+        ctx.report('UNSUPPORTED_DIRECTION', `The ${ctx.label} block has the direction "${dirText}", but it can only go UP or DOWN.`);
+      }
+      const factor = unitText === null ? undefined : UNIT_TO_CM[unitText];
+      if (unitText !== null && factor === undefined) {
+        ctx.report('UNSUPPORTED_UNIT', `The ${ctx.label} block uses the unit "${unitText}". The simulator currently supports: ${Object.keys(UNIT_TO_CM).join(', ')}.`);
+      }
+      if (direction === undefined || factor === undefined || amount === null) return null;
+      return { type: 'VERTICAL', direction, distanceCm: amount * factor, blockId: block.id };
+    },
+  },
+  // Blockly's standard loop blocks: the number in a slot (the usual one), or typed in (older Blockly).
+  controls_repeat_ext: {
+    fields: [],
+    values: ['TIMES'],
+    statements: ['DO'],
+    map: (_block, ctx, body) => repeatBody(ctx, ctx.number('TIMES', PARAMETER_LIMITS.repeatTimes, 'number of times'), body('DO')),
+  },
+  controls_repeat: {
+    fields: ['TIMES'],
+    values: [],
+    statements: ['DO'],
+    map: (_block, ctx, body) => repeatBody(ctx, ctx.fieldNumber('TIMES', PARAMETER_LIMITS.repeatTimes, 'number of times'), body('DO')),
+  },
   turn_direction_degrees: {
     fields: ['TYPE'],
     values: ['NUM0'],
@@ -202,7 +272,8 @@ const BLOCK_SPECS: Readonly<Record<string, BlockSpec>> = {
 export const SUPPORTED_BLOCK_TYPES: readonly string[] = Object.keys(BLOCK_SPECS);
 
 function checkStructure(spec: BlockSpec, block: RawBlock, ctx: MapContext): void {
-  if (block.statements.length > 0) {
+  const allowed = spec.statements ?? [];
+  if (block.statements.some((name) => !allowed.includes(name))) {
     ctx.report('UNEXPECTED_STRUCTURE', `The ${ctx.label} block has blocks nested inside it, which it should not.`);
   }
   if (block.unexpectedChildren.length > 0) {
@@ -229,6 +300,15 @@ export function mapBlocksToCommands(blocks: readonly RawBlock[]): {
   const errors: ParseIssue[] = [];
 
   for (const block of blocks) {
+    if (commands.length > MAX_EXPANDED_COMMANDS) {
+      errors.push({
+        code: 'TOO_COMPLEX',
+        message: `With its loops written out, this program runs more than ${MAX_EXPANDED_COMMANDS} blocks. Use fewer repeats.`,
+        blockId: block.id,
+        blockType: block.type,
+      });
+      break;
+    }
     const ctx = new MapContext(block);
     const spec = BLOCK_SPECS[block.type];
 
@@ -246,8 +326,15 @@ export function mapBlocksToCommands(blocks: readonly RawBlock[]): {
       );
     } else {
       checkStructure(spec, block, ctx);
-      const command = spec.map(block, ctx);
-      if (command && ctx.errors.length === 0) commands.push(command);
+      let bodyOk = true;
+      const body = (name: string) => {
+        const inner = mapBlocksToCommands(block.children.get(name) ?? []);
+        errors.push(...inner.errors);
+        if (inner.errors.length > 0) bodyOk = false;
+        return inner.commands;
+      };
+      const result = spec.map(block, ctx, body);
+      if (result && bodyOk && ctx.errors.length === 0) commands.push(...(Array.isArray(result) ? result : [result]));
     }
     errors.push(...ctx.errors);
   }

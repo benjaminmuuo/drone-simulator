@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { programXml } from '../blocks/programXml';
+import type { ProgramStep } from '../blocks/programXml';
 import { STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
 import { simulate } from '../engine/SimulationEngine';
 import { COURSE_GROUPS, DEFAULT_MAZE, MAZES } from '../mazes';
 import { DEFAULT_FLIGHT_HEIGHT_CM, OBSTACLE_CLEARANCE_CM } from '../mazes/constants';
 import { coneBase, conesOf } from '../mazes/cones';
+import { FLIGHT_WORD_DEMOS, OWN_MOVE_IDEAS, STUDENT_MOVES } from '../mazes/flightWords';
 import { GRID, MIN_PATH_CLEARANCE_CM, PAD_CM } from '../mazes/courseRules';
 import type { MazeDefinition, Point, Rect } from '../mazes/types';
 import { validateMaze } from '../mazes/validateMaze';
@@ -31,13 +34,17 @@ function route(maze: MazeDefinition): Point[] {
 }
 
 const lessons = COURSE_GROUPS[0]!.courses;
-const goalCourses = MAZES.filter((m) => m.id !== 'open-field');
+/** Activity 5 and 6 courses: 50 cm moves from the middle of the floor, most landing back on the start mark. */
+const FLIGHT_WORDS: readonly MazeDefinition[] = [...FLIGHT_WORD_DEMOS, ...STUDENT_MOVES];
+const isFlightWords = (m: MazeDefinition) => FLIGHT_WORDS.includes(m);
+/** Courses with a route to find: the lessons and the mazes. */
+const goalCourses = MAZES.filter((m) => m.id !== 'open-field' && !isFlightWords(m));
 /** The lap through the middle of the corner boxes runs closer to the floor edge than the other courses. */
 const BIG_SQUARE = 'lesson-6';
 const BIG_SQUARE_EDGE_CM = 22;
 
 describe('course list', () => {
-  it('groups Flight School lessons 1–6, then the mazes, then free flight', () => {
+  it('groups Flight School lessons 1–6, then the mazes, free flight, the demos and the student moves', () => {
     expect(COURSE_GROUPS.map((g) => [g.label, g.courses.map((c) => c.name)])).toEqual([
       [
         'Flight School',
@@ -45,6 +52,14 @@ describe('course list', () => {
       ],
       ['Maze challenges', ['Maze 1: Zig-zag', 'Maze 2: Snake']],
       ['Free flight', ['Open Floor (practice)']],
+      [
+        'Flight words (instructor demo)',
+        ['Demo 1: Throttle up / down', 'Demo 2: Hover', 'Demo 3: Pitch forward', 'Demo 4: Pitch backward', 'Demo 5: Roll', 'Demo 6: Yaw'],
+      ],
+      [
+        'Student moves',
+        ['Move 1: Up and down', 'Move 2: Out and back', 'Move 3: Look around', 'Move 3 extension: Look around with a loop', 'Move 4: Our own move'],
+      ],
     ]);
     expect(DEFAULT_MAZE.id).toBe('lesson-1');
   });
@@ -69,7 +84,7 @@ describe.each(MAZES.map((m) => [m.name, m] as const))('%s', (_name, maze) => {
     }
   });
 
-  it('example moves in whole grid boxes and turns 90°', () => {
+  it.skipIf(isFlightWords(maze))('example moves in whole grid boxes and turns 90°', () => {
     for (const { before, after } of simulate(commands(maze.exampleXml!), maze).steps) {
       const across = Math.abs(after.x - before.x) / GRID.gridSpacingCm;
       const along = Math.abs(after.y - before.y) / GRID.gridSpacingYCm;
@@ -129,5 +144,55 @@ describe('Flight School', () => {
     expect(turns.map((t) => (t.type === 'TURN' ? t.direction : ''))).toEqual([...Array(4).fill('RIGHT'), ...Array(4).fill('LEFT')]);
     const end = simulate(commands(lesson.exampleXml!), lesson).finalState;
     expect([end.x, end.y, end.headingDeg]).toEqual([lesson.start.x, lesson.start.y, 0]);
+  });
+});
+
+describe('Flight words and student moves', () => {
+  const byId = (id: string) => FLIGHT_WORDS.find((m) => m.id === id)!;
+  const fly = (id: string, steps: readonly ProgramStep[]) => simulate(commands(programXml([['takeoff'], ...steps, ['land']])), byId(id));
+  const heights = (id: string) => simulate(commands(byId(id).exampleXml!), byId(id)).steps.map((s) => s.after.heightCm);
+
+  it('demo 1 rises to flight height, goes 30 cm higher, comes back down and lands', () => {
+    expect(heights('demo-throttle')).toEqual([DEFAULT_FLIGHT_HEIGHT_CM, DEFAULT_FLIGHT_HEIGHT_CM + 30, DEFAULT_FLIGHT_HEIGHT_CM, 0]);
+  });
+
+  it('roll slides without turning; yaw turns without moving', () => {
+    const roll = simulate(commands(byId('demo-roll').exampleXml!), byId('demo-roll')).steps;
+    expect(roll.map((s) => s.after.headingDeg)).toEqual([0, 0, 0, 0]);
+    expect(roll[1]!.after.x - roll[1]!.before.x).toBe(50);
+    const yaw = simulate(commands(byId('demo-yaw').exampleXml!), byId('demo-yaw')).steps;
+    expect(yaw.map((s) => [s.after.x, s.after.y])).toEqual(yaw.map(() => [150, 110]));
+    expect(yaw[1]!.after.headingDeg).toBe(90);
+  });
+
+  it('demos 3 and 4 land ahead of and behind the start, so landing on the start fails', () => {
+    expect(fly('demo-pitch-forward', [['hover', 1]]).failure?.kind).toBe('LANDED_OUTSIDE_ZONE');
+    expect(fly('demo-pitch-backward', [['forward', 50]]).failure?.kind).toBe('LANDED_OUTSIDE_ZONE');
+  });
+
+  it('Move 3 must land facing the way it started', () => {
+    expect(fly('move-look-around', [['turn-right', 90], ['turn-right', 90], ['turn-right', 90]]).failure).toMatchObject({
+      kind: 'WRONG_HEADING',
+      message: expect.stringContaining('90° to the left'),
+    });
+  });
+
+  it('Move 3 with a loop flies exactly the same as Move 3 written out', () => {
+    const strip = (xml: string) => commands(xml).map(({ blockId: _id, ...c }) => c);
+    expect(strip(byId('move-look-around-loop').exampleXml!)).toEqual(strip(byId('move-look-around').exampleXml!));
+  });
+
+  it.each(Object.entries(OWN_MOVE_IDEAS))('Move 4 idea "%s" passes', (_name, steps) => {
+    expect(fly('move-our-own', steps).failure).toBeNull();
+  });
+
+  it('Move 4 allows at most 5 blocks between Take off and Land', () => {
+    const five: ProgramStep[] = [['forward', 50], ['right', 50], ['backward', 50], ['left', 50], ['hover', 1]];
+    expect(fly('move-our-own', five).failure).toBeNull();
+    expect(fly('move-our-own', [...five, ['hover', 1]]).failure).toMatchObject({ kind: 'TOO_MANY_BLOCKS', message: expect.stringContaining('6 blocks') });
+  });
+
+  it('Move 4 counts the blocks inside a loop once, however often they run', () => {
+    expect(fly('move-our-own', [['repeat', 8, [['turn-right', 90]]], ['hover', 1]]).failure).toBeNull();
   });
 });

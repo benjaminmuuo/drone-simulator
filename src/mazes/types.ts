@@ -53,6 +53,10 @@ export interface MazeDefinition {
   readonly gridSpacingCm: number;
   /** Grid spacing along the arena, for boxes that are not square. */
   readonly gridSpacingYCm?: number;
+  /** When set, the drone must land facing this way (0° = the way it started on most courses). */
+  readonly endHeadingDeg?: number;
+  /** When set, at most this many blocks between the first Take off and the last Land. */
+  readonly maxBlocksBetween?: number;
   /** A program that solves this course (Robolink XML), loaded by the Example button. */
   readonly exampleXml?: string;
 }

@@ -10,8 +10,13 @@ export interface Pose {
   readonly y: number;
   /** Unwrapped heading so turns animate the short/expected way (may exceed 360). */
   readonly headingDeg: number;
-  /** 0 = on the ground, 1 = flying. Visual only. */
-  readonly altitude: number;
+  /** Height above the floor in cm: 0 on the ground. */
+  readonly altitudeCm: number;
+}
+
+/** A point of the flight trail, at the height the drone flew it. */
+export interface TrailPoint extends Point {
+  readonly altitudeCm: number;
 }
 
 export interface TimelineSegment {
@@ -33,14 +38,20 @@ export interface Timeline {
 export const PLAYBACK = {
   moveCmPerSecond: 40,
   turnDegPerSecond: 75,
+  verticalCmPerSecond: 30,
   takeoffSeconds: 1.2,
   landSeconds: 1.2,
   rejectedSeconds: 0.8,
   minSeconds: 0.35,
 } as const;
 
+/** The drone sitting on its start mark. */
+export function restingPose(maze: MazeDefinition): Pose {
+  return { x: maze.start.x, y: maze.start.y, headingDeg: maze.startHeadingDeg, altitudeCm: 0 };
+}
+
 export function buildTimeline(result: SimulationResult, maze: MazeDefinition): Timeline {
-  const initialPose: Pose = { x: maze.start.x, y: maze.start.y, headingDeg: maze.startHeadingDeg, altitude: 0 };
+  const initialPose = restingPose(maze);
   const segments: TimelineSegment[] = [];
   let pose = initialPose;
   let time = 0;
@@ -61,12 +72,16 @@ export function buildTimeline(result: SimulationResult, maze: MazeDefinition): T
     } else {
       switch (command.type) {
         case 'TAKEOFF':
-          to = { ...pose, altitude: 1 };
+          to = { ...pose, altitudeCm: step.after.heightCm };
           duration = PLAYBACK.takeoffSeconds;
           break;
         case 'LAND':
-          to = { ...pose, altitude: 0 };
+          to = { ...pose, altitudeCm: 0 };
           duration = PLAYBACK.landSeconds;
+          break;
+        case 'VERTICAL':
+          to = { ...pose, altitudeCm: step.after.heightCm };
+          duration = Math.max(PLAYBACK.minSeconds, command.distanceCm / PLAYBACK.verticalCmPerSecond);
           break;
         case 'HOVER':
           duration = Math.max(PLAYBACK.minSeconds, command.durationSeconds);
@@ -125,7 +140,7 @@ export function frameAt(timeline: Timeline, seconds: number): PlaybackFrame {
         x: mix(from.x, to.x, t),
         y: mix(from.y, to.y, t),
         headingDeg: mix(from.headingDeg, to.headingDeg, t),
-        altitude: mix(from.altitude, to.altitude, t),
+        altitudeCm: mix(from.altitudeCm, to.altitudeCm, t),
       },
       activeStepIndex: segment.stepIndex,
       completedSteps: completed,
@@ -136,14 +151,28 @@ export function frameAt(timeline: Timeline, seconds: number): PlaybackFrame {
   return { pose: last ? last.to : timeline.initialPose, activeStepIndex: null, completedSteps: completed };
 }
 
-/** Points the drone has flown through up to `seconds`, for drawing a trail. */
-export function trailAt(timeline: Timeline, seconds: number): Point[] {
-  const points: Point[] = [{ x: timeline.initialPose.x, y: timeline.initialPose.y }];
+const trailPoint = (p: Pose): TrailPoint => ({ x: p.x, y: p.y, altitudeCm: p.altitudeCm });
+
+/**
+ * Points the drone has flown through up to `seconds`, for drawing a trail. It starts once
+ * the drone has climbed to flight height and includes up/down moves; take off and landing
+ * are left out, so the trail shows the moves in the program.
+ */
+export function trailAt(timeline: Timeline, seconds: number): TrailPoint[] {
+  const points: TrailPoint[] = [];
   for (const segment of timeline.segments) {
     if (seconds <= segment.start) break;
-    if (segment.from.x === segment.to.x && segment.from.y === segment.to.y) continue;
-    const end = seconds >= segment.end ? segment.to : frameAt(timeline, seconds).pose;
-    points.push({ x: end.x, y: end.y });
+    const { from, to } = segment;
+    const finished = seconds >= segment.end;
+    if (from.altitudeCm <= 0) {
+      // Taking off: the trail begins where the climb ends.
+      if (finished && to.altitudeCm > 0) points.push(trailPoint(to));
+      continue;
+    }
+    if (to.altitudeCm <= 0) continue; // landing
+    if (from.x === to.x && from.y === to.y && from.altitudeCm === to.altitudeCm) continue;
+    if (points.length === 0) points.push(trailPoint(from));
+    points.push(trailPoint(finished ? to : frameAt(timeline, seconds).pose));
   }
   return points;
 }

@@ -48,6 +48,14 @@ export const RUNNER_LIMITS = {
   landBattery: 15,
   /** Longest single move. The protocol allows 10 m; a classroom needs far less. */
   maxMoveCm: 500,
+  /** Longest single up or down move. */
+  maxVerticalCm: 100,
+  /**
+   * How far up and down the program may take the drone from its take-off height (about 70–80 cm
+   * on a CoDrone EDU): it stays well clear of the floor and under a classroom ceiling.
+   */
+  maxAboveTakeoffCm: 70,
+  maxBelowTakeoffCm: 40,
   /** codrone-edu's default move speed (m/s). */
   moveSpeed: 0.5,
   /** codrone-edu's ControlSpeed level set on connect (1–3). */
@@ -370,9 +378,22 @@ export class DroneRunner {
         problems.push(`The battery is at ${this.status!.battery}%. Charge it to at least ${RUNNER_LIMITS.minBattery}% before flying.`);
     }
     if (commands[0]?.type !== 'TAKEOFF') problems.push('The program must start with a take off block.');
+    let aboveTakeoffCm = 0;
     commands.forEach((c, i) => {
+      if (c.type === 'TAKEOFF' || c.type === 'LAND') aboveTakeoffCm = 0;
+      if (c.type === 'VERTICAL') {
+        aboveTakeoffCm += c.direction === 'UP' ? c.distanceCm : -c.distanceCm;
+        if (aboveTakeoffCm > RUNNER_LIMITS.maxAboveTakeoffCm)
+          problems.push(`Block ${i + 1} takes the drone ${aboveTakeoffCm} cm above its take-off height. A real flight allows at most ${RUNNER_LIMITS.maxAboveTakeoffCm} cm.`);
+        if (-aboveTakeoffCm > RUNNER_LIMITS.maxBelowTakeoffCm)
+          problems.push(`Block ${i + 1} takes the drone ${-aboveTakeoffCm} cm below its take-off height. A real flight allows at most ${RUNNER_LIMITS.maxBelowTakeoffCm} cm.`);
+      }
       if (c.type === 'MOVE' && c.distanceCm > RUNNER_LIMITS.maxMoveCm)
         problems.push(`Block ${i + 1} moves ${c.distanceCm} cm. A real flight allows at most ${RUNNER_LIMITS.maxMoveCm} cm per move.`);
+      if (c.type === 'VERTICAL' && c.distanceCm > RUNNER_LIMITS.maxVerticalCm)
+        problems.push(
+          `Block ${i + 1} goes ${c.direction.toLowerCase()} ${c.distanceCm} cm. A real flight allows at most ${RUNNER_LIMITS.maxVerticalCm} cm per up or down move.`,
+        );
     });
     return problems;
   }
@@ -513,6 +534,14 @@ export class DroneRunner {
         }
         return;
       }
+      case 'VERTICAL': {
+        const cm = command.direction === 'UP' ? command.distanceCm : -command.distanceCm;
+        log(`→ ${command.direction.toLowerCase()} ${command.distanceCm} cm`);
+        // The height hold now holds the new height: this move is meant, not drift.
+        if (this.heightTargetCm !== null) this.heightTargetCm += cm;
+        if (cm !== 0) await this.climb(cm, log);
+        return;
+      }
       case 'TURN': {
         log(`→ turn ${command.direction.toLowerCase()} ${command.degrees}°`);
         const degrees = command.direction === 'LEFT' ? command.degrees : -command.degrees;
@@ -599,11 +628,18 @@ export class DroneRunner {
   private async correctHeight(stepCm: number, log: (m: string) => void) {
     this.heightCorrectedCm += stepCm;
     log(`correcting height: ${Math.round(Math.abs(stepCm))} cm ${stepCm > 0 ? 'up' : 'down'}`);
+    await this.climb(stepCm, log);
+  }
+
+  /**
+   * Straight up (+) or down (−) by `cm`, then settle. Sent once, never repeated (see correctHeight).
+   */
+  private async climb(cm: number, log: (m: string) => void) {
     this.pollPaused = true;
     try {
       await this.settle(log);
-      await this.send(controlPositionPacket(0, 0, stepCm / 100, RUNNER_LIMITS.moveSpeed));
-      await this.wait((Math.abs(stepCm) / 100 / RUNNER_LIMITS.moveSpeed) * 1000 + 400);
+      await this.send(controlPositionPacket(0, 0, cm / 100, RUNNER_LIMITS.moveSpeed));
+      await this.wait((Math.abs(cm) / 100 / RUNNER_LIMITS.moveSpeed) * 1000 + 400);
       await this.settle(log);
     } finally {
       this.pollPaused = false;

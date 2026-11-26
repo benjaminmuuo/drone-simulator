@@ -12,6 +12,12 @@ const shape = (commands: readonly DroneCommand[]) =>
   commands.map((c) => (c.type === 'HOVER' ? `H${c.durationSeconds}` : c.type === 'MOVE' ? `M${c.distanceCm}` : c.type));
 
 describe('floor calibration', () => {
+  it('sends up and down moves as written (the floor calibration measured sideways moves only)', () => {
+    const up: DroneCommand = { type: 'VERTICAL', direction: 'UP', distanceCm: 30, blockId: 'u' };
+    const plan = toRealFlight([takeoff, up, land]);
+    expect(plan.commands).toContainEqual(up);
+  });
+
   it('translates floor distances into what the drone is sent', () => {
     expect([160, 240].map(realCm)).toEqual([107, 161]);
     expect(realCm(0)).toBe(0);

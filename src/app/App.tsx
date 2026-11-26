@@ -16,7 +16,7 @@ import { useSimulation } from '../hooks/useSimulation';
 import type { PlaybackPhase } from '../hooks/useSimulation';
 import { COURSE_GROUPS, DEFAULT_MAZE, findMaze } from '../mazes';
 import { DEFAULT_FLIGHT_HEIGHT_CM, FLIGHT_HEIGHT_OPTIONS_CM, OBSTACLE_CLEARANCE_CM } from '../mazes/constants';
-import type { Point } from '../mazes/types';
+import type { TrailPoint } from '../animation/timeline';
 import { describeCommand } from '../parser/describeCommand';
 import { PARSER_LIMITS, parseRobolinkXml } from '../parser/RobolinkXmlParser';
 import type { ParseIssue } from '../parser/types';
@@ -60,7 +60,7 @@ const CAMERA_KEYS: Record<string, CameraNudge> = {
   '0': 'recenter',
 };
 const NO_CHECKPOINTS: ReadonlySet<string> = new Set();
-const NO_TRAIL: readonly Point[] = [];
+const NO_TRAIL: readonly TrailPoint[] = [];
 
 const describePoint = (p: SnappedPoint) => (p.label ? `${p.label} (${formatPoint(p.point)})` : formatPoint(p.point));
 
@@ -305,13 +305,13 @@ export function App() {
   const crashed = failureShown && failure.contactPoint !== undefined;
   const flightLabel = crashed
     ? 'Crashed'
-    : frame.pose.altitude <= 0
+    : frame.pose.altitudeCm <= 0
       ? 'Landed'
-      : frame.pose.altitude >= 1
-        ? 'Flying'
-        : activeCommand?.type === 'LAND'
-          ? 'Landing…'
-          : 'Taking off…';
+      : activeCommand?.type === 'LAND'
+        ? 'Landing…'
+        : activeCommand?.type === 'TAKEOFF'
+          ? 'Taking off…'
+          : 'Flying';
 
   let statusLabel = STATUS_LABELS[phase];
   let statusTone: 'idle' | 'live' | 'ok' | 'error' = phase === 'running' || phase === 'paused' ? 'live' : 'idle';
@@ -380,6 +380,7 @@ export function App() {
             warnings={parsed?.ok ? parsed.warnings : []}
             importFailure={importFailure}
             canDownload={program !== null}
+            appOnlyBlocks={commands?.some((c) => c.type === 'VERTICAL') ?? false}
             onFile={handleFile}
             onDownload={() => program && downloadXml(program.xml, program.fileName ?? 'drone-program.xml')}
             onNew={() => startFresh(STARTER_PROGRAM_XML)}

@@ -48,10 +48,10 @@ describe('reference program on the beginner maze', () => {
 });
 
 describe('lifecycle', () => {
-  it('takeoff and land change only the flight state', () => {
+  it('takeoff and land change only the flight state and height', () => {
     const engine = new SimulationEngine(openField);
-    expect(engine.execute(takeoff, 0).after).toEqual({ x: 150, y: 110, headingDeg: 0, flight: 'FLYING' });
-    expect(engine.execute(land, 1).after).toEqual({ x: 150, y: 110, headingDeg: 0, flight: 'LANDED' });
+    expect(engine.execute(takeoff, 0).after).toEqual({ x: 150, y: 110, headingDeg: 0, flight: 'FLYING', heightCm: 80 });
+    expect(engine.execute(land, 1).after).toEqual({ x: 150, y: 110, headingDeg: 0, flight: 'LANDED', heightCm: 0 });
   });
 
   it('rejects moving before takeoff without changing state', () => {
@@ -149,7 +149,7 @@ describe('collisions during simulation', () => {
       zoneId: 'ceiling-block',
     });
     expect(result.failure?.contactPoint?.y).toBeCloseTo(98, 6);
-    expect(result.finalState).toEqual({ x: 50, y: 150, headingDeg: 0, flight: 'FLYING' });
+    expect(result.finalState).toEqual({ x: 50, y: 150, headingDeg: 0, flight: 'FLYING', heightCm: 80 });
     expect(result.steps).toHaveLength(3);
   });
 
@@ -202,7 +202,7 @@ describe('determinism', () => {
     const engine = new SimulationEngine(beginnerMaze);
     engine.run([takeoff, forward(50)]);
     engine.reset();
-    expect(engine.getState()).toEqual({ x: 50, y: 250, headingDeg: 0, flight: 'LANDED' });
+    expect(engine.getState()).toEqual({ x: 50, y: 250, headingDeg: 0, flight: 'LANDED', heightCm: 0 });
     expect(engine.getVisitedCheckpoints()).toEqual([]);
   });
 });
