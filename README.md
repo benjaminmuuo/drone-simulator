@@ -76,8 +76,9 @@ to the CoDrone EDU controller over USB directly, like Robolink Blockly does.
 1. Plug the controller in, turn the drone on, and press **Connect drone** in the *Real drone* panel.
    The browser asks which device to use. Pick the controller ("STM32 Virtual ComPort"). Only one
    tab or program can use it at a time, so close Robolink Blockly first.
-2. **Fly real drone** is enabled only when:
-   - the simulator says *Mission complete* for this program and course,
+2. **Fly real drone** works with or without running the simulator. If the simulator finds a problem,
+   the panel and the safety checklist warn about it, but the student can still fly. It is enabled when:
+   - the program has no errors,
    - the drone answers, is on the ground and ready, and has at least 30% battery,
    - the program starts with take off and no single move is longer than 500 cm.
 
@@ -104,6 +105,14 @@ to the CoDrone EDU controller over USB directly, like Robolink Blockly does.
      after 120 s.
      The app also keeps sending "land" for up to 30 s after losing contact, and shows a warning
      to press STOP if the drone doesn't come down.
+
+**Block distances are real floor centimetres.** A real flight translates them with the
+tape-measured calibration in `src/hardware/floorCalibration.ts` (black surface, full battery: the
+drone travels about 1.49 × the distance sent), so *forward 160* sends 107 cm. It also hovers 3 s
+after take-off and 1.5 s before each turn. At the end of each hover it moves back towards the height
+of its first hover: errors under 5 cm are ignored, one correction is at most 20 cm, all corrections
+together at most 35 cm, and readings outside 25–150 cm are ignored. The simulator and downloaded `.xml` files keep the numbers
+as written, so a downloaded program flown from Robolink Blockly is **not** corrected and will go too far.
 
 **Code** (`src/hardware/`):
 
@@ -163,13 +172,13 @@ right, pitch + forward. Repeat until it reports it's holding still (under 0.5 cm
 to 0** undoes it. Moves whose planned-point correction hits the 10 cm cap aren't used to learn
 distances.
 
-**Hardware test page.** `npm run dev`, then open `/spike/hardware.html`. **Flight School calibration**
-has a button for each lesson. Fly each one several times, putting the drone back on the start mark
-in between. The **Results** table summarises every flight: moves (distance flown vs asked), turn
-error, how far off course the turns left the drone, and the end point. **Copy results** copies a
-compact text summary; results are kept in the browser until **Clear results**. It flies small test
-programs (single moves, single turns, a U-turn with a 40 cm sideways step) or pasted Blockly XML, and shows raw
-state and packet logs. It is not part of the production build.
+**Hardware test page.** `npm run dev`, then open `/spike/hardware.html`. It flies the one test being
+worked on: land 60, 120 or 180 cm from the middle of the bottom-right box. Each button sends a
+shorter move, using a correction measured with a tape on the real floor (on the black surface with a full battery, real distance ≈ 1.49 ×
+sent), with distance learning held off. After each flight, fill in its card
+under **Measure each flight**. **Copy report** and **Download report** give your notes, every
+flight's numbers and the full log as text. These are kept in the browser until **Clear flights and
+log**. Trim and calibration reset are under **Setup tools**. It is not part of the production build.
 
 ## How a program flows through the app
 
@@ -318,22 +327,23 @@ imports, but with **warnings**, so students can watch where it fails.
 
 ## Courses
 
-The **Course** picker has three groups. Every course is laid out in the same 4 × 3 m taped arena,
+The **Course** picker has three groups. Every course is laid out in the same 300 × 220 cm taped arena (5 × 5 grid boxes, each 60 cm along the length × 44 cm across the width; the drone starts facing across the width),
 and each has an **Example** solution:
 
 | Group | Course | Students practise |
 |---|---|---|
-| Flight School | Lesson 1: First flight | take off, hover 2 s, forward 50 cm, land on the pad |
-| | Lesson 2: Turn right | …forward 50 cm to a cone, turn right 90°, forward 50 cm (a box stack blocks going straight on) |
+| Flight School | Lesson 1: First flight | take off, hover 2 s, forward 44 cm, land on the pad |
+| | Lesson 2: Turn right | …forward 44 cm to a cone, turn right 90°, forward 60 cm (a box stack blocks going straight on) |
 | | Lesson 3: Turn left | the same, turning left |
-| | Lesson 4: The square | a 50 cm square, turning right at each corner, back onto the start pad |
-| | Lesson 5: Figure eight | one square clockwise (right turns), then one anticlockwise (left turns) |
-| Maze challenges | Maze 1: Zig-zag | start mark to finish pad between two box walls: right, right, left |
-| | Maze 2: Snake | a longer route: left, left, right, right |
+| | Lesson 4: The rectangle | a 44 × 60 cm rectangle, turning right at each corner, back onto the start pad |
+| | Lesson 5: Figure eight | one rectangle clockwise (right turns), then one anticlockwise (left turns) |
+| | Lesson 6: Big square | from the middle of the bottom-right box, through the middle of each corner box: forward 176, left, 240, left, 176, left, 240, left, land |
+| Maze challenges | Maze 1: Zig-zag | start mark to finish pad around a box wall: right, right |
+| | Maze 2: Snake | a longer route: right, left, right, right |
 | Free flight | Open floor | no goal: practise anything, land back on the pad |
 
 The layouts follow what flight tests with a real CoDrone EDU showed (`src/mazes/courseRules.ts`):
-- moves are multiples of 50 cm, the most tested distance;
+- moves are whole grid boxes (44 cm forward, 60 cm sideways) and follow the grid lines, except Lesson 6, which runs through the box middles and passes as close as 22 cm to the floor edge;
 - landing pads are 50 × 50 cm, plenty for the drone's ±5 cm per move;
 - the route stays at least **40 cm** from every box wall and from the arena edge. That covers
   about 8 cm of drone radius, up to about 15 cm of drift over a course, and a margin.

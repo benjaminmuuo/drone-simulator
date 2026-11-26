@@ -298,12 +298,9 @@ export function App() {
   const realFlight = drone.flight.phase === 'flying' ? drone.flight : null;
   const realActive = realFlight?.activeIndex ?? null;
   const realActiveCommand = realFlight && realActive !== null ? realFlight.commands[realActive] : undefined;
-  // Rehearse first: only a program that passes the simulation may fly for real.
-  const flyBlockers = !commands
-    ? ['Fix the problems in your program first.']
-    : result?.status !== 'SUCCESS'
-      ? ['This program fails in the simulator. Fix it until the simulation says “Mission complete”.']
-      : [];
+  // The simulator is optional: its objection is shown as a warning, and only a broken program can't fly.
+  const flyBlockers = commands ? [] : ['Fix the problems in your program first.'];
+  const simWarning = commands && result && result.status !== 'SUCCESS' ? (result.failure?.message ?? 'This program does not finish the course.') : null;
 
   const crashed = failureShown && failure.contactPoint !== undefined;
   const flightLabel = crashed
@@ -366,7 +363,7 @@ export function App() {
           <Icon name="info" />
           <span>
             Shows the <strong>expected</strong> flight. Real drones can drift with battery, sensors and air, so always fly
-            carefully. When the simulation passes, you can fly the real drone over USB.
+            carefully. Test your blocks in the simulator, or fly them straight on the real drone over USB.
           </span>
         </p>
       </header>
@@ -610,7 +607,7 @@ export function App() {
 
             {phase === 'finished' && result && <MissionFeedback result={result} onShowBlock={onShowBlock} />}
 
-            <RealDronePanel drone={drone} commands={commands} blockers={flyBlockers} onShowBlock={onShowBlock} />
+            <RealDronePanel drone={drone} commands={commands} blockers={flyBlockers} simWarning={simWarning} onShowBlock={onShowBlock} />
           </section>
           {realFlight ? (
             <FlightPlan commands={realFlight.commands} activeIndex={realActive} completedCount={realActive ?? 0} failedIndex={null} />

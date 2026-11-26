@@ -1,4 +1,4 @@
-import { DEFAULT_CALIBRATION } from './DroneRunner';
+import { CALIBRATION_LIMITS, DEFAULT_CALIBRATION } from './DroneRunner';
 import type { Calibration } from './DroneRunner';
 
 /**
@@ -8,14 +8,16 @@ import type { Calibration } from './DroneRunner';
  */
 const STORAGE_KEY = 'birds.droneCalibration.v1';
 
-const inRange = (v: unknown, min: number, max: number): v is number => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
+/** Same limits the runner learns within, so a saved value can never be one the runner couldn't have learned. */
+const inRange = (v: unknown, { min, max }: { readonly min: number; readonly max: number }): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
 
 export function loadCalibration(): Calibration {
   try {
     const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? 'null') as Partial<Calibration> | null;
-    if (saved && inRange(saved.overshootDeg, 0, 15) && inRange(saved.moveRatio, 0.5, 1.5)) {
+    if (saved && inRange(saved.overshootDeg, CALIBRATION_LIMITS.overshootDeg) && inRange(saved.moveRatio, CALIBRATION_LIMITS.moveRatio)) {
       // Calibrations saved before after-turn moves were learned separately start from the one ratio.
-      const afterTurn = inRange(saved.moveRatioAfterTurn, 0.5, 1.5) ? saved.moveRatioAfterTurn : saved.moveRatio;
+      const afterTurn = inRange(saved.moveRatioAfterTurn, CALIBRATION_LIMITS.moveRatio) ? saved.moveRatioAfterTurn : saved.moveRatio;
       return { overshootDeg: saved.overshootDeg, moveRatio: saved.moveRatio, moveRatioAfterTurn: afterTurn };
     }
   } catch {

@@ -28,6 +28,8 @@ export class FakeDrone implements DroneLink {
   /** Position in metres, in the take-off frame (x forward, y left). */
   x = 0;
   y = 0;
+  /** Height in metres, as the position sensor reports it. */
+  z = 0;
   /** Like the real drone, it keeps reporting "Moving" for a while after a turn. */
   settleMs = 800;
   /** Share of each requested move actually travelled (the real drone stops a little short). */
@@ -115,6 +117,7 @@ export class FakeDrone implements DroneLink {
       const at = this.where();
       view.setFloat32(0, at.x, true);
       view.setFloat32(4, at.y, true);
+      view.setFloat32(8, this.z, true);
       this.reply(DataType.Position, Array.from(new Uint8Array(view.buffer)));
     } else if (type === DataType.Motion) {
       // Integrate the yaw command since the last request (≈ power × 1.5 °/s per unit).
@@ -174,6 +177,16 @@ export class FakeDrone implements DroneLink {
         this.movement = MOVEMENT.Moving;
         this.later((Math.abs(heading) / rate) * 1000, () => {
           this.yaw = ((this.yaw + heading + Math.sign(heading) * this.overshootDeg + 540) % 360) - 180;
+          this.movement = MOVEMENT.Hovering;
+        });
+        return;
+      }
+      const up = view.getFloat32(8, true);
+      if (up !== 0) {
+        this.events.push(`HEIGHT ${up.toFixed(2)}`);
+        this.movement = MOVEMENT.Moving;
+        this.later((Math.abs(up) / v) * 1000, () => {
+          this.z += up;
           this.movement = MOVEMENT.Hovering;
         });
         return;

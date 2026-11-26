@@ -50,8 +50,8 @@ describe('reference program on the beginner maze', () => {
 describe('lifecycle', () => {
   it('takeoff and land change only the flight state', () => {
     const engine = new SimulationEngine(openField);
-    expect(engine.execute(takeoff, 0).after).toEqual({ x: 200, y: 150, headingDeg: 0, flight: 'FLYING' });
-    expect(engine.execute(land, 1).after).toEqual({ x: 200, y: 150, headingDeg: 0, flight: 'LANDED' });
+    expect(engine.execute(takeoff, 0).after).toEqual({ x: 150, y: 110, headingDeg: 0, flight: 'FLYING' });
+    expect(engine.execute(land, 1).after).toEqual({ x: 150, y: 110, headingDeg: 0, flight: 'LANDED' });
   });
 
   it('rejects moving before takeoff without changing state', () => {
@@ -86,7 +86,7 @@ describe('lifecycle', () => {
   it('fails when landing outside the landing zone', () => {
     const result = simulate([takeoff, forward(100), land], openField);
     expect(result.failure?.kind).toBe('LANDED_OUTSIDE_ZONE');
-    expect(result.finalState).toMatchObject({ x: 200, y: 50, flight: 'LANDED' });
+    expect(result.finalState).toMatchObject({ x: 150, y: 10, flight: 'LANDED' });
   });
 
   it('fails an empty program', () => {
@@ -107,31 +107,31 @@ describe('hover and rotation', () => {
   it('rotation keeps position and accumulates heading', () => {
     const result = simulate([takeoff, right(90), right(90), right(90), right(90), land], openField);
     expect(result.steps.map((s) => s.after.headingDeg)).toEqual([0, 90, 180, 270, 0, 0]);
-    expect(result.finalState).toMatchObject({ x: 200, y: 150 });
+    expect(result.finalState).toMatchObject({ x: 150, y: 110 });
   });
 
   it('moves along the rotated heading', () => {
     const result = simulate([takeoff, right(90), forward(30), land], openField);
-    expect(result.steps[2]?.after).toMatchObject({ x: 230, y: 150 });
+    expect(result.steps[2]?.after).toMatchObject({ x: 180, y: 110 });
   });
 });
 
 describe('landing on cones', () => {
   it('fails at the Land block when the drone comes down on a checkpoint cone', () => {
-    // Lesson 2: the cone is 50 cm straight ahead of the start mark.
-    const result = simulate([takeoff, forward(50), land], lessonTurnRight);
+    // Lesson 2: the cone is 44 cm straight ahead of the start mark.
+    const result = simulate([takeoff, forward(44), land], lessonTurnRight);
     expect(result.failure).toMatchObject({ kind: 'LANDED_ON_CONE', commandIndex: 2, blockId: 'ld' });
     expect(result.failure?.message).toMatch(/land on the Corner cone.*tip over or break a propeller/);
-    expect(result.failure?.contactPoint).toEqual({ x: 150, y: 200 });
+    expect(result.failure?.contactPoint).toEqual({ x: 120, y: 132 });
   });
 
   it('only counts the cone itself: landing 25 cm away just misses the pad', () => {
-    expect(simulate([takeoff, forward(25), land], lessonTurnRight).failure?.kind).toBe('LANDED_OUTSIDE_ZONE');
+    expect(simulate([takeoff, forward(19), land], lessonTurnRight).failure?.kind).toBe('LANDED_OUTSIDE_ZONE');
   });
 
   it('includes the cones in the arena corners', () => {
-    // Open floor: start (200, 150) facing up → (200, 10) → left to (10, 10), next to the corner cone at (6, 6).
-    const result = simulate([takeoff, forward(140), left(90), forward(190), land], openField);
+    // Open floor: start (150, 110) facing up → (150, 10) → left to (10, 10), next to the corner cone at (6, 6).
+    const result = simulate([takeoff, forward(100), left(90), forward(140), land], openField);
     expect(result.failure).toMatchObject({ kind: 'LANDED_ON_CONE', commandIndex: 4 });
     expect(result.failure?.message).toContain('arena corner cone');
   });
@@ -156,11 +156,11 @@ describe('collisions during simulation', () => {
   it('cannot tunnel through a thin wall with one long move', () => {
     const thinWall: MazeDefinition = {
       ...openField,
-      obstacles: [{ id: 'thin', label: 'Thin wall', x: 250, y: 0, width: 1, height: 300 }],
+      obstacles: [{ id: 'thin', label: 'Thin wall', x: 200, y: 0, width: 1, height: 300 }],
     };
     const result = simulate([takeoff, right(90), forward(100)], thinWall);
     expect(result.failure).toMatchObject({ kind: 'COLLISION_OBSTACLE', zoneId: 'thin' });
-    expect(result.finalState.x).toBe(200);
+    expect(result.finalState.x).toBe(150);
   });
 
   it('detects restricted zones', () => {
@@ -170,7 +170,7 @@ describe('collisions during simulation', () => {
 
     const zoned: MazeDefinition = {
       ...openField,
-      noFlyZones: [{ id: 'nfz', label: 'Red zone', x: 180, y: 40, width: 40, height: 20 }],
+      noFlyZones: [{ id: 'nfz', label: 'Red zone', x: 130, y: 40, width: 40, height: 20 }],
     };
     expect(simulate([takeoff, forward(100), land], zoned).failure).toMatchObject({ kind: 'NO_FLY_ZONE', zoneId: 'nfz' });
   });
@@ -178,8 +178,8 @@ describe('collisions during simulation', () => {
   it('detects arena boundaries', () => {
     const result = simulate([takeoff, forward(200), land], openField);
     expect(result.failure?.kind).toBe('OUT_OF_BOUNDS');
-    expect(result.failure?.contactPoint).toEqual({ x: 200, y: 8 });
-    expect(result.finalState).toMatchObject({ x: 200, y: 150 });
+    expect(result.failure?.contactPoint).toEqual({ x: 150, y: 8 });
+    expect(result.finalState).toMatchObject({ x: 150, y: 110 });
   });
 
   it('fails if a required checkpoint is skipped', () => {
@@ -240,7 +240,7 @@ describe('maze configuration', () => {
   it('rejects a start position inside an obstacle', () => {
     const blocked: MazeDefinition = {
       ...openField,
-      obstacles: [{ id: 'o', label: 'o', x: 190, y: 140, width: 20, height: 20 }],
+      obstacles: [{ id: 'o', label: 'o', x: 140, y: 100, width: 20, height: 20 }],
     };
     expect(validateMaze(blocked)).toContain('The start position overlaps obstacle "o".');
   });

@@ -4,7 +4,7 @@ import { simulate } from '../engine/SimulationEngine';
 import { COURSE_GROUPS, DEFAULT_MAZE, MAZES } from '../mazes';
 import { DEFAULT_FLIGHT_HEIGHT_CM, OBSTACLE_CLEARANCE_CM } from '../mazes/constants';
 import { coneBase, conesOf } from '../mazes/cones';
-import { MIN_PATH_CLEARANCE_CM, PAD_CM } from '../mazes/courseRules';
+import { GRID, MIN_PATH_CLEARANCE_CM, PAD_CM } from '../mazes/courseRules';
 import type { MazeDefinition, Point, Rect } from '../mazes/types';
 import { validateMaze } from '../mazes/validateMaze';
 import { parseRobolinkXml } from '../parser/RobolinkXmlParser';
@@ -32,13 +32,16 @@ function route(maze: MazeDefinition): Point[] {
 
 const lessons = COURSE_GROUPS[0]!.courses;
 const goalCourses = MAZES.filter((m) => m.id !== 'open-field');
+/** The lap through the middle of the corner boxes runs closer to the floor edge than the other courses. */
+const BIG_SQUARE = 'lesson-6';
+const BIG_SQUARE_EDGE_CM = 22;
 
 describe('course list', () => {
-  it('groups Flight School lessons 1–5, then the mazes, then free flight', () => {
+  it('groups Flight School lessons 1–6, then the mazes, then free flight', () => {
     expect(COURSE_GROUPS.map((g) => [g.label, g.courses.map((c) => c.name)])).toEqual([
       [
         'Flight School',
-        ['Lesson 1: First flight', 'Lesson 2: Turn right', 'Lesson 3: Turn left', 'Lesson 4: The square', 'Lesson 5: Figure eight'],
+        ['Lesson 1: First flight', 'Lesson 2: Turn right', 'Lesson 3: Turn left', 'Lesson 4: The rectangle', 'Lesson 5: Figure eight', 'Lesson 6: Big square'],
       ],
       ['Maze challenges', ['Maze 1: Zig-zag', 'Maze 2: Snake']],
       ['Free flight', ['Open Floor (practice)']],
@@ -62,13 +65,18 @@ describe.each(MAZES.map((m) => [m.name, m] as const))('%s', (_name, maze) => {
     const tall = maze.obstacles.filter((o) => (o.heightCm ?? Infinity) > DEFAULT_FLIGHT_HEIGHT_CM - OBSTACLE_CLEARANCE_CM);
     for (const p of route(maze)) {
       for (const o of tall) expect(distanceToRect(p, o)).toBeGreaterThanOrEqual(MIN_PATH_CLEARANCE_CM);
-      expect(Math.min(p.x, p.y, maze.widthCm - p.x, maze.heightCm - p.y)).toBeGreaterThanOrEqual(MIN_PATH_CLEARANCE_CM);
+      expect(Math.min(p.x, p.y, maze.widthCm - p.x, maze.heightCm - p.y)).toBeGreaterThanOrEqual(maze.id === BIG_SQUARE ? BIG_SQUARE_EDGE_CM : MIN_PATH_CLEARANCE_CM);
     }
   });
 
-  it('example uses tested moves: 50 cm steps and 90° turns', () => {
+  it('example moves in whole grid boxes and turns 90°', () => {
+    for (const { before, after } of simulate(commands(maze.exampleXml!), maze).steps) {
+      const across = Math.abs(after.x - before.x) / GRID.gridSpacingCm;
+      const along = Math.abs(after.y - before.y) / GRID.gridSpacingYCm;
+      expect(across).toBeCloseTo(Math.round(across), 6);
+      expect(along).toBeCloseTo(Math.round(along), 6);
+    }
     for (const c of commands(maze.exampleXml!)) {
-      if (c.type === 'MOVE') expect(c.distanceCm % 50).toBe(0);
       if (c.type === 'TURN') expect(c.degrees % 90).toBe(0);
     }
   });
@@ -115,7 +123,7 @@ describe('Flight School', () => {
     );
   });
 
-  it('lesson 5 flies one square clockwise and one anticlockwise, ending where it started', () => {
+  it('lesson 5 flies one rectangle clockwise and one anticlockwise, ending where it started', () => {
     const lesson = lessons[4]!;
     const turns = commands(lesson.exampleXml!).filter((c) => c.type === 'TURN');
     expect(turns.map((t) => (t.type === 'TURN' ? t.direction : ''))).toEqual([...Array(4).fill('RIGHT'), ...Array(4).fill('LEFT')]);

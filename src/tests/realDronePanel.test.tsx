@@ -138,15 +138,19 @@ describe('App with a real drone', () => {
     return view;
   }
 
-  it('only lets a program that passes the simulation fly', async () => {
+  it('flies without passing the simulator, and warns about what it found', async () => {
     const view = await appWith(STARTER_PROGRAM_XML, controller());
     // Take off → land misses the landing pad in Flight School lesson 1.
-    expect(flyButton()).toBeDisabled();
-    expect(screen.getByTestId('real-drone-reasons')).toHaveTextContent(/fails in the simulator/);
+    expect(flyButton()).toBeEnabled();
+    expect(screen.getByTestId('real-drone-sim-warning')).toHaveTextContent(/without the simulator/);
+    fireEvent.click(flyButton());
+    expect(screen.getByTestId('real-drone-confirm-warning')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     act(() => editor.props!.onChange(DEFAULT_MAZE.exampleXml!, 'edit'));
     view.rerender(<App />);
     expect(flyButton()).toBeEnabled();
+    expect(screen.queryByTestId('real-drone-sim-warning')).toBeNull();
   });
 
   it('highlights the block being flown and disables the simulator Run', async () => {

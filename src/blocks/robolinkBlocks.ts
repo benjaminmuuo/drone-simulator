@@ -160,7 +160,7 @@ export const TOOLBOX = {
       name: 'Move',
       colour: CATEGORY_COLOURS.move,
       cssConfig: { row: 'blocklyToolboxCategory toolbox-cat toolbox-cat--move', icon: 'toolbox-cat__icon' },
-      contents: [go('FORWARD', 50), go('BACKWARD', 50), go('LEFT', 50), go('RIGHT', 50)],
+      contents: [go('FORWARD', 44), go('BACKWARD', 44), go('LEFT', 60), go('RIGHT', 60)],
     },
     {
       kind: 'category',

@@ -18,7 +18,7 @@ import {
 
 const program: DroneCommand[] = [
   { type: 'TAKEOFF', blockId: 'a' },
-  { type: 'MOVE', direction: 'FORWARD', distanceCm: 80, blockId: 'b' },
+  { type: 'MOVE', direction: 'FORWARD', distanceCm: 60, blockId: 'b' },
   { type: 'TURN', direction: 'RIGHT', degrees: 90, blockId: 'c' },
   { type: 'MOVE', direction: 'LEFT', distanceCm: 40, blockId: 'd' },
   { type: 'LAND', blockId: 'e' },
@@ -29,8 +29,8 @@ const at = (i: number, fraction: number) => seg(i).start + (seg(i).end - seg(i).
 
 describe('3D coordinate mapping', () => {
   it('centres the arena and maps arena y to world z', () => {
-    expect(arenaToWorld(openField, 0, 0)).toEqual({ x: -200, y: 0, z: -150 });
-    expect(arenaToWorld(openField, 400, 300, 80)).toEqual({ x: 200, y: 80, z: 150 });
+    expect(arenaToWorld(openField, 0, 0)).toEqual({ x: -150, y: 0, z: -110 });
+    expect(arenaToWorld(openField, 300, 220, 80)).toEqual({ x: 150, y: 80, z: 110 });
   });
 
   it('turns clockwise headings into counter-clockwise yaw', () => {
@@ -76,7 +76,7 @@ describe('visual flight dynamics', () => {
 
   it('does not change the authoritative path', () => {
     // Heading 90° after the turn, so strafing left moves the drone up the arena.
-    expect(frameAt(timeline, timeline.totalSeconds).pose).toMatchObject({ x: 200, y: 30, altitude: 0 });
+    expect(frameAt(timeline, timeline.totalSeconds).pose).toMatchObject({ x: 150, y: 10, altitude: 0 });
   });
 
   it('hover wobble is tiny, deterministic and absent on the ground', () => {
