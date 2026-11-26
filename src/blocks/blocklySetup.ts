@@ -63,6 +63,8 @@ export function birdsTheme(): Blockly.Theme {
       [BLOCK_STYLE.timing]: style('#d98a0b', '#fdf0d5', '#b06f05'),
       [BLOCK_STYLE.move]: style('#3466e8', '#dde7fd', '#2551c4'),
       [BLOCK_STYLE.turn]: style('#7a55e0', '#ebe4fc', '#5f3fc0'),
+      [BLOCK_STYLE.vertical]: style('#0e8fb3', '#d8f1f8', '#0a7090'),
+      [BLOCK_STYLE.loop]: style('#c2410c', '#fde4d5', '#9a3412'),
       [BLOCK_STYLE.number]: style('#ffffff', '#ffffff', '#cfd6e1'),
     },
     componentStyles: {

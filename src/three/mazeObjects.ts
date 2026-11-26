@@ -27,6 +27,7 @@ import {
 import type { Material, Object3D, Texture, Vector3 } from 'three';
 import { ARENA_CONE_INSET_CM } from '../mazes/cones';
 import { DEFAULT_FLIGHT_HEIGHT_CM, DEFAULT_OBSTACLE_HEIGHT_CM } from '../mazes/constants';
+import type { TrailPoint } from '../animation/timeline';
 import type { MazeDefinition, Obstacle, Point } from '../mazes/types';
 import { arenaToWorld, seededRandom } from './coords';
 import type { ThemeId } from './themeOptions';
@@ -48,7 +49,7 @@ export interface MazeObjects {
   setShowGrid(show: boolean): void;
   setFlightHeight(heightCm: number): void;
   setVisitedCheckpoints(ids: ReadonlySet<string>): void;
-  setTrail(points: readonly Point[]): void;
+  setTrail(points: readonly TrailPoint[]): void;
   setCrashPoint(point: Point | null): void;
   /** Ring on the ground under the drone showing its collision radius. */
   setFootprint(point: Point): void;
@@ -318,8 +319,7 @@ export function createMazeObjects(maze: MazeDefinition, theme: ThemeId): MazeObj
   const trail = new Line(trailGeo, new LineBasicMaterial({ color: '#2563eb', transparent: true, opacity: 0.85 }));
   trail.frustumCulled = false;
   root.add(trail);
-  let trailPoints: readonly Point[] = [];
-  let flightHeight = DEFAULT_FLIGHT_HEIGHT_CM;
+  let trailPoints: readonly TrailPoint[] = [];
 
   // Crash marker on the ground.
   const crash = new Group();
@@ -347,13 +347,12 @@ export function createMazeObjects(maze: MazeDefinition, theme: ThemeId): MazeObj
 
   const drawTrail = () => {
     const positions: number[] = [];
-    for (const p of trailPoints) positions.push(...at(p.x, p.y, flightHeight));
+    for (const p of trailPoints) positions.push(...at(p.x, p.y, p.altitudeCm));
     trailGeo.setAttribute('position', new Float32BufferAttribute(positions, 3));
     trail.visible = trailPoints.length > 1;
   };
 
   const setFlightHeight = (heightCm: number) => {
-    flightHeight = heightCm;
     for (const cp of maze.checkpoints) {
       const parts = checkpointParts.get(cp.id);
       if (!parts) continue;
@@ -362,9 +361,8 @@ export function createMazeObjects(maze: MazeDefinition, theme: ThemeId): MazeObj
       parts.beamMesh.scale.y = beamH;
       parts.beamMesh.position.set(...at(cp.x, cp.y, beamH / 2));
     }
-    drawTrail();
   };
-  setFlightHeight(flightHeight);
+  setFlightHeight(DEFAULT_FLIGHT_HEIGHT_CM);
 
   return {
     root,

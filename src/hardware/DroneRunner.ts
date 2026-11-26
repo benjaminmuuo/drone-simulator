@@ -48,6 +48,14 @@ export const RUNNER_LIMITS = {
   landBattery: 15,
   /** Longest single move. The protocol allows 10 m; a classroom needs far less. */
   maxMoveCm: 500,
+  /** Longest single up or down move. */
+  maxVerticalCm: 100,
+  /**
+   * How far up and down the program may take the drone from its take-off height (about 70–80 cm
+   * on a CoDrone EDU): it stays well clear of the floor and under a classroom ceiling.
+   */
+  maxAboveTakeoffCm: 70,
+  maxBelowTakeoffCm: 40,
   /** codrone-edu's default move speed (m/s). */
   moveSpeed: 0.5,
   /** codrone-edu's ControlSpeed level set on connect (1–3). */
@@ -86,7 +94,26 @@ const TURN_GAIN = 10;
  */
 const INITIAL_OVERSHOOT_DEG = 4;
 export const DEFAULT_CALIBRATION: Calibration = { overshootDeg: INITIAL_OVERSHOOT_DEG, moveRatio: 1, moveRatioAfterTurn: 1 };
-const MAX_OVERSHOOT_DEG = 10;
+/**
+ * The only values a calibration may hold, whether learned in flight or loaded from storage.
+ * A move ratio of 0.75 already sends a third more than the block asks for; anything lower
+ * (e.g. a damaged saved value) could send the drone much further than the program says.
+ */
+export const CALIBRATION_LIMITS = {
+  overshootDeg: { min: 0, max: 10 },
+  moveRatio: { min: 0.75, max: 1.1 },
+} as const;
+const clamp = (v: number, { min, max }: { readonly min: number; readonly max: number }) => Math.max(min, Math.min(max, v));
+/** Forces every value into CALIBRATION_LIMITS (non-numbers fall back to the defaults). */
+export function clampCalibration(c: Calibration): Calibration {
+  const safe = (v: number, fallback: number, limits: { readonly min: number; readonly max: number }) =>
+    clamp(Number.isFinite(v) ? v : fallback, limits);
+  return {
+    overshootDeg: safe(c.overshootDeg, DEFAULT_CALIBRATION.overshootDeg, CALIBRATION_LIMITS.overshootDeg),
+    moveRatio: safe(c.moveRatio, DEFAULT_CALIBRATION.moveRatio, CALIBRATION_LIMITS.moveRatio),
+    moveRatioAfterTurn: safe(c.moveRatioAfterTurn, DEFAULT_CALIBRATION.moveRatioAfterTurn, CALIBRATION_LIMITS.moveRatio),
+  };
+}
 /**
  * Turns outside this overshoot range (e.g. 111° for 90°, after a radio gap) say nothing about
  * the drone's usual overshoot, so they are not learned from.
@@ -137,9 +164,24 @@ const MIN_LEARN_MOVE_CM = 20;
  * position reading can't send the drone far off.
  */
 const MAX_AIM_ADJUST_CM = 10;
+/**
+ * Height hold: at the end of each hover the drone is moved back towards the height of its first hover.
+ * Limited because the reading comes from a sensor that can be wrong: small errors are left alone,
+ * each correction is capped, the corrections added together are capped, and odd readings are ignored.
+ */
+export const HEIGHT_HOLD = { deadbandCm: 5, maxStepCm: 20, maxTotalCm: 35, minReadingCm: 25, maxReadingCm: 150 } as const;
+
+/** How far to move up (+) or down (−) to get back to the target, given the net correction so far. */
+export function heightStep(targetCm: number, nowCm: number, correctedCm: number): number {
+  const { deadbandCm, maxStepCm, maxTotalCm } = HEIGHT_HOLD;
+  const error = targetCm - nowCm;
+  if (Math.abs(error) < deadbandCm) return 0;
+  const step = Math.max(-maxStepCm, Math.min(maxStepCm, error));
+  const room = Math.max(-maxTotalCm, Math.min(maxTotalCm, correctedCm + step)) - correctedCm;
+  return Math.abs(room) < 1 ? 0 : room;
+}
 /** Position samples during a move; every 4th request is a State poll instead, so the safety checks keep working. */
 const PATH_SAMPLE_MS = 100;
-const MOVE_RATIO_LIMITS = { min: 0.75, max: 1.1 } as const;
 /** Samples outside this range (a bump, a drift) are not learned from. */
 const MOVE_SAMPLE_RANGE = { min: 0.5, max: 1.3 } as const;
 const MOVE_LEARNING_RATE = 0.25;
@@ -185,7 +227,16 @@ export type Measurement =
    * How far the drone drifted while hovering, relative to itself: forward + / back −, right + / left −.
    * A steady drift one way is a trim problem.
    */
-  | { readonly kind: 'hover'; readonly seconds: number; readonly forwardCm: number; readonly rightCm: number }
+  | {
+      readonly kind: 'hover';
+      readonly seconds: number;
+      readonly forwardCm: number;
+      readonly rightCm: number;
+      /** Height the drone's own sensor reports at the end of the hover. */
+      readonly heightCm: number;
+      /** Height correction sent after this hover: up (+) or down (−). */
+      readonly heightFixCm: number;
+    }
   /** Replies stopped mid-flight for `seconds`; recovered = the signal came back and the flight carried on. */
   | { readonly kind: 'dropout'; readonly seconds: number; readonly recovered: boolean }
   /**
@@ -254,6 +305,12 @@ export class DroneRunner {
   /** Learned distance travelled / distance sent. Kept across flights while connected. */
   moveRatio: number;
   moveRatioAfterTurn: number;
+  /** Learn distance ratios from the drone's position sensor. Off when a tape-measured correction is in use. */
+  learnDistance = true;
+  /** Move back to the first hover's height at the end of each hover. */
+  holdHeight = false;
+  private heightTargetCm: number | null = null;
+  private heightCorrectedCm = 0;
   /** A turn has run since the last move (so the next move uses moveRatioAfterTurn). */
   private turnedSinceMove = false;
   /** When the battery reading first dropped below landBattery (null while above). */
@@ -277,9 +334,10 @@ export class DroneRunner {
     private readonly link: DroneLink,
     calibration: Calibration = DEFAULT_CALIBRATION,
   ) {
-    this.overshootDeg = calibration.overshootDeg;
-    this.moveRatio = calibration.moveRatio;
-    this.moveRatioAfterTurn = calibration.moveRatioAfterTurn;
+    const safe = clampCalibration(calibration);
+    this.overshootDeg = safe.overshootDeg;
+    this.moveRatio = safe.moveRatio;
+    this.moveRatioAfterTurn = safe.moveRatioAfterTurn;
     this.unsubscribe = link.onPacket((p) => this.handle(p));
     this.pollTimer = setInterval(() => {
       if (!this.pollPaused) void this.link.send(requestStatePacket()).catch(() => {});
@@ -320,9 +378,22 @@ export class DroneRunner {
         problems.push(`The battery is at ${this.status!.battery}%. Charge it to at least ${RUNNER_LIMITS.minBattery}% before flying.`);
     }
     if (commands[0]?.type !== 'TAKEOFF') problems.push('The program must start with a take off block.');
+    let aboveTakeoffCm = 0;
     commands.forEach((c, i) => {
+      if (c.type === 'TAKEOFF' || c.type === 'LAND') aboveTakeoffCm = 0;
+      if (c.type === 'VERTICAL') {
+        aboveTakeoffCm += c.direction === 'UP' ? c.distanceCm : -c.distanceCm;
+        if (aboveTakeoffCm > RUNNER_LIMITS.maxAboveTakeoffCm)
+          problems.push(`Block ${i + 1} takes the drone ${aboveTakeoffCm} cm above its take-off height. A real flight allows at most ${RUNNER_LIMITS.maxAboveTakeoffCm} cm.`);
+        if (-aboveTakeoffCm > RUNNER_LIMITS.maxBelowTakeoffCm)
+          problems.push(`Block ${i + 1} takes the drone ${-aboveTakeoffCm} cm below its take-off height. A real flight allows at most ${RUNNER_LIMITS.maxBelowTakeoffCm} cm.`);
+      }
       if (c.type === 'MOVE' && c.distanceCm > RUNNER_LIMITS.maxMoveCm)
         problems.push(`Block ${i + 1} moves ${c.distanceCm} cm. A real flight allows at most ${RUNNER_LIMITS.maxMoveCm} cm per move.`);
+      if (c.type === 'VERTICAL' && c.distanceCm > RUNNER_LIMITS.maxVerticalCm)
+        problems.push(
+          `Block ${i + 1} goes ${c.direction.toLowerCase()} ${c.distanceCm} cm. A real flight allows at most ${RUNNER_LIMITS.maxVerticalCm} cm per up or down move.`,
+        );
     });
     return problems;
   }
@@ -418,8 +489,11 @@ export class DroneRunner {
           const rightCm = dx * Math.sin(r) - dy * Math.cos(r);
           const seconds = (after.at - before.at) / 1000;
           const part = (v: number, plus: string, minus: string) => `${Math.round(Math.abs(v))} cm ${v >= 0 ? plus : minus}`;
-          log(`drifted ${part(forwardCm, 'forward', 'back')}, ${part(rightCm, 'right', 'left')} in ${seconds.toFixed(1)} s`);
-          measure({ kind: 'hover', seconds, forwardCm, rightCm });
+          const heightCm = after.z * 100;
+          log(`drifted ${part(forwardCm, 'forward', 'back')}, ${part(rightCm, 'right', 'left')} in ${seconds.toFixed(1)} s, height ${Math.round(heightCm)} cm`);
+          const heightFixCm = this.holdHeight ? this.planHeightFix(heightCm, log) : 0;
+          measure({ kind: 'hover', seconds, forwardCm, rightCm, heightCm, heightFixCm });
+          if (heightFixCm !== 0) await this.correctHeight(heightFixCm, log);
         }
         return;
       }
@@ -460,6 +534,14 @@ export class DroneRunner {
         }
         return;
       }
+      case 'VERTICAL': {
+        const cm = command.direction === 'UP' ? command.distanceCm : -command.distanceCm;
+        log(`→ ${command.direction.toLowerCase()} ${command.distanceCm} cm`);
+        // The height hold now holds the new height: this move is meant, not drift.
+        if (this.heightTargetCm !== null) this.heightTargetCm += cm;
+        if (cm !== 0) await this.climb(cm, log);
+        return;
+      }
       case 'TURN': {
         log(`→ turn ${command.direction.toLowerCase()} ${command.degrees}°`);
         const degrees = command.direction === 'LEFT' ? command.degrees : -command.degrees;
@@ -482,7 +564,7 @@ export class DroneRunner {
             log(`(unusual turn: not used to learn the overshoot)`);
           } else {
             const next = this.overshootDeg + OVERSHOOT_LEARNING_RATE * (observed - this.overshootDeg);
-            this.overshootDeg = Math.max(0, Math.min(MAX_OVERSHOOT_DEG, next));
+            this.overshootDeg = clamp(next, CALIBRATION_LIMITS.overshootDeg);
           }
         }
         this.courseError = wrap180(this.courseError + turned - degrees);
@@ -522,7 +604,51 @@ export class DroneRunner {
     }
   }
 
+  /** Decides the height correction for this reading; the first good reading sets the height to hold. */
+  private planHeightFix(heightCm: number, log: (m: string) => void): number {
+    if (!(heightCm >= HEIGHT_HOLD.minReadingCm && heightCm <= HEIGHT_HOLD.maxReadingCm)) {
+      log(`⚠ height reading of ${Math.round(heightCm)} cm looks wrong: not correcting`);
+      return 0;
+    }
+    if (this.heightTargetCm === null) {
+      this.heightTargetCm = heightCm;
+      log(`holding height at ${Math.round(heightCm)} cm`);
+      return 0;
+    }
+    const step = heightStep(this.heightTargetCm, heightCm, this.heightCorrectedCm);
+    if (step === 0 && Math.abs(this.heightTargetCm - heightCm) >= HEIGHT_HOLD.deadbandCm)
+      log(`⚠ height correction limit reached (${HEIGHT_HOLD.maxTotalCm} cm): not correcting further`);
+    return step;
+  }
+
+  /**
+   * Sent once, never repeated: a short relative move can finish before a state reply shows "Moving",
+   * and resending would add it again. If the packet is lost, the next hover corrects.
+   */
+  private async correctHeight(stepCm: number, log: (m: string) => void) {
+    this.heightCorrectedCm += stepCm;
+    log(`correcting height: ${Math.round(Math.abs(stepCm))} cm ${stepCm > 0 ? 'up' : 'down'}`);
+    await this.climb(stepCm, log);
+  }
+
+  /**
+   * Straight up (+) or down (−) by `cm`, then settle. Sent once, never repeated (see correctHeight).
+   */
+  private async climb(cm: number, log: (m: string) => void) {
+    this.pollPaused = true;
+    try {
+      await this.settle(log);
+      await this.send(controlPositionPacket(0, 0, cm / 100, RUNNER_LIMITS.moveSpeed));
+      await this.wait((Math.abs(cm) / 100 / RUNNER_LIMITS.moveSpeed) * 1000 + 400);
+      await this.settle(log);
+    } finally {
+      this.pollPaused = false;
+    }
+  }
+
   private async takeOff() {
+    this.heightTargetCm = null;
+    this.heightCorrectedCm = 0;
     this.courseError = 0;
     this.plan = null;
     this.turnedSinceMove = false;
@@ -551,7 +677,7 @@ export class DroneRunner {
   }
 
   /** Position (metres) and heading while the drone holds still, read with State polling paused. */
-  private async stillReading(): Promise<{ x: number; y: number; yawDeg: number; at: number } | null> {
+  private async stillReading(): Promise<{ x: number; y: number; z: number; yawDeg: number; at: number } | null> {
     this.pollPaused = true;
     try {
       const at = await this.freshPosition();
@@ -696,6 +822,7 @@ export class DroneRunner {
     let adjustAlongCm = 0;
     let adjustSideCm = 0;
     let bodyDeg = bearingDeg;
+    let sentCm = askedCm;
     this.pollPaused = true;
     try {
       await this.settle(log);
@@ -726,7 +853,12 @@ export class DroneRunner {
       } else if (heading !== null) {
         lineDeg = heading + bearingDeg;
       }
-      const sentCm = targetCm / ratio;
+      // Hard limit on what is actually sent, after the distance ratio and planned-point aiming.
+      sentCm = targetCm / ratio;
+      if (!(sentCm <= RUNNER_LIMITS.maxMoveCm)) {
+        log(`⚠ limited to ${RUNNER_LIMITS.maxMoveCm} cm (would have sent ${Math.round(sentCm)} cm)`);
+        sentCm = RUNNER_LIMITS.maxMoveCm;
+      }
       const r = (bodyDeg * Math.PI) / 180;
       const m = sentCm / 100;
       const packet = () => controlPositionPacket(m * Math.cos(r), m * Math.sin(r), 0, RUNNER_LIMITS.moveSpeed);
@@ -734,7 +866,6 @@ export class DroneRunner {
     } finally {
       this.pollPaused = false;
     }
-    const sentCm = targetCm / ratio;
     const path = await this.trackPath((sentCm / 100 / RUNNER_LIMITS.moveSpeed) * 1000 + 1000);
     const result = { targetCm, sentCm, adjustAlongCm, adjustSideCm };
 
@@ -779,14 +910,14 @@ export class DroneRunner {
 
 
   private learnMoveRatio(moved: MoveReport, sentCm: number, afterTurn: boolean, log: (m: string) => void) {
+    if (!this.learnDistance) return;
     if (sentCm < MIN_LEARN_MOVE_CM || (moved.offDeg !== null && Math.abs(moved.offDeg) > MAX_LEARN_OFF_DEG)) return;
     const sample = moved.cm / sentCm;
     if (sample < MOVE_SAMPLE_RANGE.min || sample > MOVE_SAMPLE_RANGE.max) {
       log('(unusual move: not used to learn the distance)');
       return;
     }
-    const learn = (ratio: number) =>
-      Math.max(MOVE_RATIO_LIMITS.min, Math.min(MOVE_RATIO_LIMITS.max, ratio + MOVE_LEARNING_RATE * (sample - ratio)));
+    const learn = (ratio: number) => clamp(ratio + MOVE_LEARNING_RATE * (sample - ratio), CALIBRATION_LIMITS.moveRatio);
     if (afterTurn) this.moveRatioAfterTurn = learn(this.moveRatioAfterTurn);
     else this.moveRatio = learn(this.moveRatio);
   }

@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
 import type { MutableRefObject } from 'react';
-import type { Timeline } from '../animation/timeline';
+import type { Timeline, TrailPoint } from '../animation/timeline';
 import type { SimulationFailure } from '../engine/types';
 import type { PlaybackPhase } from '../hooks/useSimulation';
-import type { MazeDefinition, Point } from '../mazes/types';
+import type { MazeDefinition } from '../mazes/types';
 import { createDroneWorld } from '../three/createDroneWorld';
 import type { CameraMode, CameraNudge, DroneWorld, FollowView, MeasureState, WorldSnapshot } from '../three/createDroneWorld';
 import type { ThemeId } from '../three/themeOptions';
@@ -23,7 +23,7 @@ export interface Maze3DViewportProps {
   readonly phase: PlaybackPhase;
   readonly failure: SimulationFailure | null;
   readonly visitedCheckpoints: ReadonlySet<string>;
-  readonly trail: readonly Point[];
+  readonly trail: readonly TrailPoint[];
   readonly showGrid: boolean;
   readonly cameraMode: CameraMode;
   readonly followView: FollowView;

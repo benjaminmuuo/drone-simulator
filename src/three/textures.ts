@@ -143,7 +143,8 @@ export function arenaTexture(maze: MazeDefinition, showGrid: boolean, theme: The
       ctx.lineTo(x, maze.heightCm);
       ctx.stroke();
     }
-    for (let y = maze.gridSpacingCm; y < maze.heightCm; y += maze.gridSpacingCm) {
+    const gridY = maze.gridSpacingYCm ?? maze.gridSpacingCm;
+    for (let y = gridY; y < maze.heightCm; y += gridY) {
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(maze.widthCm, y);

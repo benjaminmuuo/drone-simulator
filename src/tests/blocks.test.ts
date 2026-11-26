@@ -81,11 +81,12 @@ describe('Robolink-compatible blocks', () => {
 
   it('every palette block builds a valid command', () => {
     const workspace = new Blockly.Workspace();
-    expect(PALETTE_BLOCKS).toHaveLength(9);
+    expect(PALETTE_BLOCKS).toHaveLength(12);
     for (const item of PALETTE_BLOCKS) {
       const block = Blockly.serialization.blocks.append(item as Blockly.serialization.blocks.State, workspace);
       const xml = `<xml xmlns="https://developers.google.com/blockly/xml">${Blockly.Xml.domToText(Blockly.Xml.blockToDom(block))}</xml>`;
-      expect(commandsOf(xml)).toHaveLength(1);
+      // An empty loop runs nothing; every other block is one command.
+      expect(commandsOf(xml)).toHaveLength((item as { type: string }).type === 'controls_repeat_ext' ? 0 : 1);
       block.dispose();
     }
     workspace.dispose();

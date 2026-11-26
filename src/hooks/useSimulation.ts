@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { buildTimeline, frameAt, trailAt } from '../animation/timeline';
+import { buildTimeline, frameAt, restingPose, trailAt } from '../animation/timeline';
+import type { TrailPoint } from '../animation/timeline';
 import type { PlaybackFrame, Timeline } from '../animation/timeline';
 import { simulate } from '../engine/SimulationEngine';
 import type { SimulationResult } from '../engine/types';
-import type { MazeDefinition, Point } from '../mazes/types';
+import type { MazeDefinition } from '../mazes/types';
 import type { DroneCommand } from '../parser/types';
 
 export type PlaybackPhase = 'idle' | 'running' | 'paused' | 'finished';
@@ -24,7 +25,7 @@ export interface SimulationController {
   readonly elapsed: number;
   readonly phase: PlaybackPhase;
   readonly frame: PlaybackFrame;
-  readonly trail: readonly Point[];
+  readonly trail: readonly TrailPoint[];
   readonly visitedCheckpoints: ReadonlySet<string>;
   readonly speed: PlaybackSpeed;
   run(): void;
@@ -48,7 +49,7 @@ export function useSimulation(
     [commands, maze, flightHeightCm],
   );
   const timeline = useMemo(
-    () => (result ? buildTimeline(result, maze) : { initialPose: { ...maze.start, headingDeg: maze.startHeadingDeg, altitude: 0 }, segments: [], totalSeconds: 0 }),
+    () => (result ? buildTimeline(result, maze) : { initialPose: restingPose(maze), segments: [], totalSeconds: 0 }),
     [result, maze],
   );
 

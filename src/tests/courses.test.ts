@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { programXml } from '../blocks/programXml';
+import type { ProgramStep } from '../blocks/programXml';
 import { STARTER_PROGRAM_XML } from '../blocks/robolinkBlocks';
 import { simulate } from '../engine/SimulationEngine';
 import { COURSE_GROUPS, DEFAULT_MAZE, MAZES } from '../mazes';
 import { DEFAULT_FLIGHT_HEIGHT_CM, OBSTACLE_CLEARANCE_CM } from '../mazes/constants';
 import { coneBase, conesOf } from '../mazes/cones';
-import { MIN_PATH_CLEARANCE_CM, PAD_CM } from '../mazes/courseRules';
+import { FLIGHT_WORD_DEMOS, OWN_MOVE_IDEAS, STUDENT_MOVES } from '../mazes/flightWords';
+import { GRID, MIN_PATH_CLEARANCE_CM, PAD_CM } from '../mazes/courseRules';
 import type { MazeDefinition, Point, Rect } from '../mazes/types';
 import { validateMaze } from '../mazes/validateMaze';
 import { parseRobolinkXml } from '../parser/RobolinkXmlParser';
@@ -31,17 +34,32 @@ function route(maze: MazeDefinition): Point[] {
 }
 
 const lessons = COURSE_GROUPS[0]!.courses;
-const goalCourses = MAZES.filter((m) => m.id !== 'open-field');
+/** Activity 5 and 6 courses: 50 cm moves from the middle of the floor, most landing back on the start mark. */
+const FLIGHT_WORDS: readonly MazeDefinition[] = [...FLIGHT_WORD_DEMOS, ...STUDENT_MOVES];
+const isFlightWords = (m: MazeDefinition) => FLIGHT_WORDS.includes(m);
+/** Courses with a route to find: the lessons and the mazes. */
+const goalCourses = MAZES.filter((m) => m.id !== 'open-field' && !isFlightWords(m));
+/** The lap through the middle of the corner boxes runs closer to the floor edge than the other courses. */
+const BIG_SQUARE = 'lesson-6';
+const BIG_SQUARE_EDGE_CM = 22;
 
 describe('course list', () => {
-  it('groups Flight School lessons 1–5, then the mazes, then free flight', () => {
+  it('groups Flight School lessons 1–6, then the mazes, free flight, the demos and the student moves', () => {
     expect(COURSE_GROUPS.map((g) => [g.label, g.courses.map((c) => c.name)])).toEqual([
       [
         'Flight School',
-        ['Lesson 1: First flight', 'Lesson 2: Turn right', 'Lesson 3: Turn left', 'Lesson 4: The square', 'Lesson 5: Figure eight'],
+        ['Lesson 1: First flight', 'Lesson 2: Turn right', 'Lesson 3: Turn left', 'Lesson 4: The rectangle', 'Lesson 5: Figure eight', 'Lesson 6: Big square'],
       ],
       ['Maze challenges', ['Maze 1: Zig-zag', 'Maze 2: Snake']],
       ['Free flight', ['Open Floor (practice)']],
+      [
+        'Flight words (instructor demo)',
+        ['Demo 1: Throttle up / down', 'Demo 2: Hover', 'Demo 3: Pitch forward', 'Demo 4: Pitch backward', 'Demo 5: Roll', 'Demo 6: Yaw'],
+      ],
+      [
+        'Student moves',
+        ['Move 1: Up and down', 'Move 2: Out and back', 'Move 3: Look around', 'Move 3 extension: Look around with a loop', 'Move 4: Our own move'],
+      ],
     ]);
     expect(DEFAULT_MAZE.id).toBe('lesson-1');
   });
@@ -62,13 +80,18 @@ describe.each(MAZES.map((m) => [m.name, m] as const))('%s', (_name, maze) => {
     const tall = maze.obstacles.filter((o) => (o.heightCm ?? Infinity) > DEFAULT_FLIGHT_HEIGHT_CM - OBSTACLE_CLEARANCE_CM);
     for (const p of route(maze)) {
       for (const o of tall) expect(distanceToRect(p, o)).toBeGreaterThanOrEqual(MIN_PATH_CLEARANCE_CM);
-      expect(Math.min(p.x, p.y, maze.widthCm - p.x, maze.heightCm - p.y)).toBeGreaterThanOrEqual(MIN_PATH_CLEARANCE_CM);
+      expect(Math.min(p.x, p.y, maze.widthCm - p.x, maze.heightCm - p.y)).toBeGreaterThanOrEqual(maze.id === BIG_SQUARE ? BIG_SQUARE_EDGE_CM : MIN_PATH_CLEARANCE_CM);
     }
   });
 
-  it('example uses tested moves: 50 cm steps and 90° turns', () => {
+  it.skipIf(isFlightWords(maze))('example moves in whole grid boxes and turns 90°', () => {
+    for (const { before, after } of simulate(commands(maze.exampleXml!), maze).steps) {
+      const across = Math.abs(after.x - before.x) / GRID.gridSpacingCm;
+      const along = Math.abs(after.y - before.y) / GRID.gridSpacingYCm;
+      expect(across).toBeCloseTo(Math.round(across), 6);
+      expect(along).toBeCloseTo(Math.round(along), 6);
+    }
     for (const c of commands(maze.exampleXml!)) {
-      if (c.type === 'MOVE') expect(c.distanceCm % 50).toBe(0);
       if (c.type === 'TURN') expect(c.degrees % 90).toBe(0);
     }
   });
@@ -115,11 +138,62 @@ describe('Flight School', () => {
     );
   });
 
-  it('lesson 5 flies one square clockwise and one anticlockwise, ending where it started', () => {
+  it('lesson 5 flies one rectangle clockwise and one anticlockwise, ending where it started', () => {
     const lesson = lessons[4]!;
     const turns = commands(lesson.exampleXml!).filter((c) => c.type === 'TURN');
     expect(turns.map((t) => (t.type === 'TURN' ? t.direction : ''))).toEqual([...Array(4).fill('RIGHT'), ...Array(4).fill('LEFT')]);
     const end = simulate(commands(lesson.exampleXml!), lesson).finalState;
     expect([end.x, end.y, end.headingDeg]).toEqual([lesson.start.x, lesson.start.y, 0]);
+  });
+});
+
+describe('Flight words and student moves', () => {
+  const byId = (id: string) => FLIGHT_WORDS.find((m) => m.id === id)!;
+  const fly = (id: string, steps: readonly ProgramStep[]) => simulate(commands(programXml([['takeoff'], ...steps, ['land']])), byId(id));
+  const heights = (id: string) => simulate(commands(byId(id).exampleXml!), byId(id)).steps.map((s) => s.after.heightCm);
+
+  it('demo 1 rises to flight height, goes 30 cm higher, comes back down and lands', () => {
+    expect(heights('demo-throttle')).toEqual([DEFAULT_FLIGHT_HEIGHT_CM, DEFAULT_FLIGHT_HEIGHT_CM + 30, DEFAULT_FLIGHT_HEIGHT_CM, 0]);
+  });
+
+  it('roll slides without turning; yaw turns without moving', () => {
+    const roll = simulate(commands(byId('demo-roll').exampleXml!), byId('demo-roll')).steps;
+    expect(roll.map((s) => s.after.headingDeg)).toEqual([0, 0, 0, 0]);
+    expect(roll[1]!.after.x - roll[1]!.before.x).toBe(50);
+    const yaw = simulate(commands(byId('demo-yaw').exampleXml!), byId('demo-yaw')).steps;
+    expect(yaw.map((s) => [s.after.x, s.after.y])).toEqual(yaw.map(() => [150, 110]));
+    expect(yaw[1]!.after.headingDeg).toBe(90);
+  });
+
+  it.each(FLIGHT_WORDS.map((m) => [m.name, m.id] as const))('%s is an open flight: it can land anywhere, facing any way', (_name, id) => {
+    expect(fly(id, [['forward', 80], ['turn-right', 90], ['right', 100]]).failure).toBeNull();
+  });
+
+  it('open flights still fail on leaving the floor', () => {
+    expect(fly('demo-hover', [['forward', 200]]).failure?.kind).toBe('OUT_OF_BOUNDS');
+  });
+
+  it('Open Floor is an open flight too', () => {
+    const open = MAZES.find((m) => m.id === 'open-field')!;
+    expect(simulate(commands(programXml([['takeoff'], ['left', 100], ['land']])), open).failure).toBeNull();
+  });
+
+  it('Move 3 with a loop flies exactly the same as Move 3 written out', () => {
+    const strip = (xml: string) => commands(xml).map(({ blockId: _id, ...c }) => c);
+    expect(strip(byId('move-look-around-loop').exampleXml!)).toEqual(strip(byId('move-look-around').exampleXml!));
+  });
+
+  it.each(Object.entries(OWN_MOVE_IDEAS))('Move 4 idea "%s" passes', (_name, steps) => {
+    expect(fly('move-our-own', steps).failure).toBeNull();
+  });
+
+  it('Move 4 allows at most 5 blocks between Take off and Land', () => {
+    const five: ProgramStep[] = [['forward', 50], ['right', 50], ['backward', 50], ['left', 50], ['hover', 1]];
+    expect(fly('move-our-own', five).failure).toBeNull();
+    expect(fly('move-our-own', [...five, ['hover', 1]]).failure).toMatchObject({ kind: 'TOO_MANY_BLOCKS', message: expect.stringContaining('6 blocks') });
+  });
+
+  it('Move 4 counts the blocks inside a loop once, however often they run', () => {
+    expect(fly('move-our-own', [['repeat', 8, [['turn-right', 90]]], ['hover', 1]]).failure).toBeNull();
   });
 });

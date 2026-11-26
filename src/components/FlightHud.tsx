@@ -11,6 +11,7 @@ export function FlightHud({ pose, flightLabel }: Props) {
   const rows: Array<[label: string, id: string, value: string]> = [
     ['X', 'x', `${pose.x.toFixed(1)} cm`],
     ['Y', 'y', `${pose.y.toFixed(1)} cm`],
+    ['Height', 'height', `${Math.round(pose.altitudeCm)} cm`],
     ['Heading', 'heading', `${normalizeHeading(Math.round(pose.headingDeg))}°`],
     ['Drone', 'flight', flightLabel],
   ];

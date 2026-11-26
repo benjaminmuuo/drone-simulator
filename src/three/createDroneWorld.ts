@@ -33,12 +33,12 @@ import {
 } from 'three';
 import type { Material, Texture } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { frameAt } from '../animation/timeline';
-import type { Timeline } from '../animation/timeline';
+import { frameAt, restingPose } from '../animation/timeline';
+import type { Timeline, TrailPoint } from '../animation/timeline';
 import { headingVector } from '../engine/MovementEngine';
 import type { SimulationFailure } from '../engine/types';
 import { DEFAULT_FLIGHT_HEIGHT_CM } from '../mazes/constants';
-import type { MazeDefinition, Point } from '../mazes/types';
+import type { MazeDefinition } from '../mazes/types';
 import { clampToBounds, clearViewScale, smoothDamp } from './cameraView';
 import { arenaToWorld, headingToYaw } from './coords';
 import { createDroneModel } from './droneModel';
@@ -48,6 +48,9 @@ import type { Measurement, SnapCandidate, SnappedPoint } from './measure';
 import { attitudeAt, crashFall, hoverWobble } from './motion';
 import { createScenery } from './scenery';
 import type { ThemeId } from './themeOptions';
+
+/** Height at which the propellers are at full speed and the hover wobble at full strength. */
+const LIFT_FULL_CM = 30;
 
 export type CameraMode = 'orbit' | 'follow' | 'top';
 /** Where the follow camera sits, relative to the way the drone is facing. */
@@ -59,7 +62,7 @@ export interface WorldSnapshot {
   readonly phase: 'idle' | 'running' | 'paused' | 'finished';
   readonly failure: SimulationFailure | null;
   readonly visitedCheckpoints: ReadonlySet<string>;
-  readonly trail: readonly Point[];
+  readonly trail: readonly TrailPoint[];
 }
 
 /** Progress of the measuring tool: the first point, then the result. */
@@ -247,11 +250,10 @@ export function createDroneWorld(container: HTMLElement, maze: MazeDefinition, o
   });
 
   let snapshot: WorldSnapshot | null = null;
-  let flightHeight = DEFAULT_FLIGHT_HEIGHT_CM;
   let propSpeed = 0;
   let crashStartedAt: number | null = null;
-  let crashFromAltitude = flightHeight;
-  let lastTrail: readonly Point[] | null = null;
+  let crashFromAltitude = DEFAULT_FLIGHT_HEIGHT_CM;
+  let lastTrail: readonly TrailPoint[] | null = null;
   let lastVisited: ReadonlySet<string> | null = null;
 
   const resize = () => {
@@ -574,9 +576,11 @@ export function createDroneWorld(container: HTMLElement, maze: MazeDefinition, o
     const timeline = snap?.timeline;
     const elapsed = snap?.elapsed ?? 0;
     const phase = snap?.phase ?? 'idle';
-    const pose = timeline ? frameAt(timeline, elapsed).pose : { ...maze.start, headingDeg: maze.startHeadingDeg, altitude: 0 };
+    const pose = timeline ? frameAt(timeline, elapsed).pose : restingPose(maze);
+    // 0 on the ground, 1 once clear of it: drives the propeller spin-up and the hover wobble.
+    const lift = Math.min(1, pose.altitudeCm / LIFT_FULL_CM);
 
-    let altitude = pose.altitude * flightHeight;
+    let altitude = pose.altitudeCm;
     let pitch = 0;
     let roll = 0;
     if (timeline && phase !== 'idle') {
@@ -585,7 +589,7 @@ export function createDroneWorld(container: HTMLElement, maze: MazeDefinition, o
       roll = attitude.rollDeg;
     }
     // Real multirotors never hold perfectly still: add a gentle hover wobble.
-    const wobble = hoverWobble(now, pose.altitude);
+    const wobble = hoverWobble(now, lift);
     altitude += wobble.dyCm;
     pitch += wobble.pitchDeg;
     roll += wobble.rollDeg;
@@ -608,7 +612,7 @@ export function createDroneWorld(container: HTMLElement, maze: MazeDefinition, o
       crashStartedAt = null;
     }
 
-    const targetSpin = crashed ? 0 : pose.altitude > 0.001 ? 0.75 + 0.25 * pose.altitude : 0;
+    const targetSpin = crashed ? 0 : lift > 0.001 ? 0.75 + 0.25 * lift : 0;
     propSpeed += (targetSpin - propSpeed) * smoothing(crashed ? 6 : 3, dt);
     drone.spinProps(propSpeed, dt);
 
@@ -631,7 +635,7 @@ export function createDroneWorld(container: HTMLElement, maze: MazeDefinition, o
     } else if (mode === 'follow') {
       // Aim at the drone's flight position (ignoring the hover bob, so the
       // view stays steady), a little ahead of where it is going.
-      const t = arenaToWorld(maze, pose.x, pose.y, Math.max(crashed ? altitude : pose.altitude * flightHeight, 8));
+      const t = arenaToWorld(maze, pose.x, pose.y, Math.max(crashed ? altitude : pose.altitudeCm, 8));
       target.set(t.x, t.y, t.z);
       if (timeline && phase === 'running') {
         const ahead = frameAt(timeline, Math.min(timeline.totalSeconds, elapsed + LOOK_AHEAD_SECONDS)).pose;
@@ -768,7 +772,6 @@ export function createDroneWorld(container: HTMLElement, maze: MazeDefinition, o
       objects.setShowGrid(show);
     },
     setFlightHeight(heightCm) {
-      flightHeight = heightCm;
       objects.setFlightHeight(heightCm);
     },
     setMeasureMode(on) {

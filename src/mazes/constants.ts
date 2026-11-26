@@ -16,3 +16,9 @@ export const OBSTACLE_CLEARANCE_CM = 10;
 
 /** Height used for obstacles that do not specify one. */
 export const DEFAULT_OBSTACLE_HEIGHT_CM = 120;
+
+/**
+ * Heights a program may fly at with up/down blocks. Below the lowest, the drone is
+ * too close to the floor (use Land instead); the highest is the classroom limit.
+ */
+export const FLIGHT_HEIGHT_LIMITS_CM = { min: 20, max: 150 } as const;

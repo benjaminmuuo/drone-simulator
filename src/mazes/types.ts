@@ -49,8 +49,14 @@ export interface MazeDefinition {
   /** All checkpoints must be visited for the mission to succeed. */
   readonly checkpoints: readonly Checkpoint[];
   readonly droneRadiusCm: number;
-  /** Spacing of the optional background grid. */
+  /** Spacing of the optional background grid (across the arena, and along it too unless gridSpacingYCm is set). */
   readonly gridSpacingCm: number;
+  /** Grid spacing along the arena, for boxes that are not square. */
+  readonly gridSpacingYCm?: number;
+  /** Open flight: the drone may land anywhere on the floor (the pad only marks the start). */
+  readonly openLanding?: boolean;
+  /** When set, at most this many blocks between the first Take off and the last Land. */
+  readonly maxBlocksBetween?: number;
   /** A program that solves this course (Robolink XML), loaded by the Example button. */
   readonly exampleXml?: string;
 }

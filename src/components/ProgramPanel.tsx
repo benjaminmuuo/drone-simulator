@@ -19,6 +19,8 @@ interface Props {
   readonly warnings: readonly ParseIssue[];
   readonly importFailure: ImportFailure | null;
   readonly canDownload: boolean;
+  /** True when the program uses up/down blocks, which only this app knows. */
+  readonly appOnlyBlocks?: boolean;
   readonly onFile: (file: File) => void;
   readonly onDownload: () => void;
   readonly onNew: () => void;
@@ -64,7 +66,7 @@ function IssueList({
 }
 
 export function ProgramPanel(props: Props) {
-  const { editor, fileName, imported, loading, commandCount, errors, warnings, importFailure, canDownload } = props;
+  const { editor, fileName, imported, loading, commandCount, errors, warnings, importFailure, canDownload, appOnlyBlocks = false } = props;
   const { onFile, onDownload, onNew, onExample, onShowBlock } = props;
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -171,6 +173,14 @@ export function ProgramPanel(props: Props) {
             <p className="notice__title">Heads up: this program will probably fail.</p>
             <IssueList issues={warnings} tone="warning" label="Program warnings" onShowBlock={onShowBlock} />
           </div>
+        )}
+        {appOnlyBlocks && (
+          <p className="notice notice--note" role="note" data-testid="app-only-blocks">
+            <span className="notice__title">
+              <Icon name="info" size={14} /> Go up / down blocks work in this app only.
+            </span>
+            <span>Robolink Blockly can't open a downloaded program that uses them. Fly it on the real drone from here.</span>
+          </p>
         )}
       </footer>
     </section>

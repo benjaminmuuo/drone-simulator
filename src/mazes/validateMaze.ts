@@ -22,7 +22,7 @@ export function validateMaze(maze: MazeDefinition): string[] {
   if (maze.id.trim() === '') problems.push('Maze id must not be empty.');
   if (!(maze.widthCm > 0 && maze.heightCm > 0)) problems.push('Arena width and height must be positive.');
   if (!(r > 0)) problems.push('Drone radius must be positive.');
-  if (!(maze.gridSpacingCm > 0)) problems.push('Grid spacing must be positive.');
+  if (!(maze.gridSpacingCm > 0 && (maze.gridSpacingYCm ?? maze.gridSpacingCm) > 0)) problems.push('Grid spacing must be positive.');
   if (!isFiniteNumber(maze.startHeadingDeg)) problems.push('Start heading must be a finite number.');
 
   const { x, y } = maze.start;

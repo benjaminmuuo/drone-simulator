@@ -171,10 +171,10 @@ describe('parseRobolinkXml — malformed input', () => {
 describe('parseRobolinkXml — unsupported content', () => {
   it('rejects unsupported block types and keeps the block id', () => {
     const xml = program(
-      `<block type="takeoff" id="t"><next><block type="controls_repeat_ext" id="loop1"><next><block type="land" id="l"/></next></block></next></block>`,
+      `<block type="takeoff" id="t"><next><block type="controls_whileUntil" id="loop1"><next><block type="land" id="l"/></next></block></next></block>`,
     );
     const [error] = expectErrors(parseRobolinkXml(xml));
-    expect(error).toMatchObject({ code: 'UNSUPPORTED_BLOCK', blockId: 'loop1', blockType: 'controls_repeat_ext' });
+    expect(error).toMatchObject({ code: 'UNSUPPORTED_BLOCK', blockId: 'loop1', blockType: 'controls_whileUntil' });
   });
 
   it('rejects nested statement inputs on supported blocks', () => {

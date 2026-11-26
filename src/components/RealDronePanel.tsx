@@ -12,6 +12,8 @@ interface Props {
   readonly commands: readonly DroneCommand[] | null;
   /** Reasons, from the app side, not to fly yet (e.g. the simulation fails). */
   readonly blockers: readonly string[];
+  /** The simulator's objection to this program, if any. A warning: the student may still fly. */
+  readonly simWarning?: string | null;
   readonly onShowBlock: ((blockId: string) => void) | null;
 }
 
@@ -29,7 +31,7 @@ function Outcome({ outcome, commands, onShowBlock }: { outcome: RunOutcome; comm
   if (outcome.status === 'COMPLETED')
     return (
       <p className="real-drone__result real-drone__result--ok" role="status">
-        <Icon name="check" /> Real flight complete. Did it land where the simulator said it would?
+        <Icon name="check" /> Real flight complete. Did it land where you planned?
       </p>
     );
   if (outcome.status === 'ABORTED')
@@ -62,7 +64,7 @@ function Outcome({ outcome, commands, onShowBlock }: { outcome: RunOutcome; comm
 }
 
 /** Connect a real CoDrone EDU over USB and fly the program on it. */
-export function RealDronePanel({ drone, commands, blockers, onShowBlock }: Props) {
+export function RealDronePanel({ drone, commands, blockers, simWarning = null, onShowBlock }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [label, tone] = pill(drone);
   const { flight, status } = drone;
@@ -137,6 +139,7 @@ export function RealDronePanel({ drone, commands, blockers, onShowBlock }: Props
           <ul>
             <li>The flying area is clear, and everyone is standing back.</li>
             <li>The drone is on its start mark, with its front facing the right way.</li>
+            {simWarning && <li data-testid="real-drone-confirm-warning"><strong>Check your route:</strong> {simWarning}</li>}
             <li>
               <strong>Space</strong> or <strong>STOP</strong> cuts the motors at once. <strong>Land now</strong> lands gently.
             </li>
@@ -165,6 +168,10 @@ export function RealDronePanel({ drone, commands, blockers, onShowBlock }: Props
                 <li key={r}>{r}</li>
               ))}
             </ul>
+          ) : simWarning ? (
+            <p className="real-drone__result real-drone__text" role="status" data-testid="real-drone-sim-warning">
+              <Icon name="alert" /> You can fly without the simulator, but it found a problem: {simWarning}
+            </p>
           ) : (
             <p className="real-drone__text">The simulation passed. Ready to fly it for real.</p>
           )}

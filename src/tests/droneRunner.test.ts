@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DroneRunner, RUNNER_LIMITS } from '../hardware/DroneRunner';
+import { CALIBRATION_LIMITS, DroneRunner, RUNNER_LIMITS, heightStep } from '../hardware/DroneRunner';
 import type { Measurement } from '../hardware/DroneRunner';
 import { parseRobolinkXml } from '../parser/RobolinkXmlParser';
 import type { DroneCommand } from '../parser/types';
@@ -22,6 +22,7 @@ const cmd = {
   hover: (s: number): DroneCommand => ({ type: 'HOVER', durationSeconds: s, blockId: 'h' }),
   forward: (cm: number): DroneCommand => ({ type: 'MOVE', direction: 'FORWARD', distanceCm: cm, blockId: 'm' }),
   turn: (direction: 'LEFT' | 'RIGHT', degrees: number): DroneCommand => ({ type: 'TURN', direction, degrees, blockId: 't' }),
+  vertical: (direction: 'UP' | 'DOWN', cm: number): DroneCommand => ({ type: 'VERTICAL', direction, distanceCm: cm, blockId: 'v' }),
 } as const satisfies Record<string, DroneCommand | ((...args: never[]) => DroneCommand)>;
 
 /** Advances fake time until the promise settles. */
@@ -256,7 +257,67 @@ describe('DroneRunner', () => {
     expect(hover.rightCm).toBeCloseTo(6, 0);
     expect(Math.abs(hover.forwardCm)).toBeLessThan(1);
     expect(hover.seconds).toBeGreaterThan(2.5);
-    expect(log).toContainEqual(expect.stringMatching(/^drifted 0 cm forward, 6 cm right in \d\.\d s$/));
+    expect(log).toContainEqual(expect.stringMatching(/^drifted 0 cm forward, 6 cm right in \d\.\d s, height \d+ cm$/));
+    expect(hover.heightCm).toBeCloseTo(0, 0); // The fake drone reports height 0.
+  });
+
+  it('moves back to the first hover height, once per hover', async () => {
+    runner.holdHeight = true;
+    drone.z = 0.8;
+    const run = runner.run([cmd.takeoff, cmd.hover(2), cmd.hover(3), cmd.land]);
+    await vi.advanceTimersByTimeAsync(6500);
+    drone.z = 0.95; // It climbed 15 cm during the second hover.
+    expect(await settle(run)).toEqual({ status: 'COMPLETED' });
+    expect(drone.events.filter((e) => e.startsWith('HEIGHT'))).toEqual(['HEIGHT -0.15']);
+    expect(drone.z).toBeCloseTo(0.8, 2);
+  });
+
+  it('leaves the height alone when the reading looks wrong or height hold is off', async () => {
+    runner.holdHeight = true;
+    drone.z = 0.8;
+    const run = runner.run([cmd.takeoff, cmd.hover(2), cmd.hover(3), cmd.land]);
+    await vi.advanceTimersByTimeAsync(6500);
+    drone.z = 3; // Not a believable classroom height.
+    await settle(run);
+    expect(drone.events.some((e) => e.startsWith('HEIGHT'))).toBe(false);
+
+    runner.holdHeight = false;
+    drone.flight = FLIGHT.Ready;
+    drone.z = 0.8;
+    const second = runner.run([cmd.takeoff, cmd.hover(2), cmd.hover(3), cmd.land]);
+    await vi.advanceTimersByTimeAsync(6500);
+    drone.z = 1;
+    await settle(second);
+    expect(drone.events.some((e) => e.startsWith('HEIGHT'))).toBe(false);
+  });
+
+  it('flies up and down blocks straight up and down, and holds the new height afterwards', async () => {
+    runner.holdHeight = true;
+    drone.z = 0.8;
+    const outcome = await settle(runner.run([cmd.takeoff, cmd.hover(2), cmd.vertical('UP', 30), cmd.hover(2), cmd.vertical('DOWN', 50), cmd.hover(2), cmd.land]));
+    expect(outcome).toEqual({ status: 'COMPLETED' });
+    // Only the two moves: the hovers after them don't pull the drone back to the first height.
+    expect(drone.events.filter((e) => e.startsWith('HEIGHT'))).toEqual(['HEIGHT 0.30', 'HEIGHT -0.50']);
+    expect(drone.moves).toEqual([]);
+  });
+
+  it('refuses up and down moves that are too long, or go too far from the take-off height', () => {
+    drone.flight = FLIGHT.Ready;
+    const problems = (cs: DroneCommand[]) => runner.preflight([cmd.takeoff, ...cs, cmd.land]);
+    expect(problems([cmd.vertical('UP', 30), cmd.vertical('DOWN', 30)])).toEqual([]);
+    expect(problems([cmd.vertical('UP', RUNNER_LIMITS.maxVerticalCm + 10)]).join(' ')).toMatch(/at most 100 cm per up or down move/);
+    expect(problems([cmd.vertical('UP', 40), cmd.vertical('UP', 40)])).toEqual([expect.stringMatching(/^Block 3 takes the drone 80 cm above/)]);
+    expect(problems([cmd.vertical('DOWN', 50)])).toEqual([expect.stringMatching(/50 cm below its take-off height/)]);
+  });
+
+  it('limits each height correction and their total', () => {
+    expect(heightStep(80, 83, 0)).toBe(0); // Small errors are left alone.
+    expect(heightStep(80, 93, 0)).toBe(-13);
+    expect(heightStep(80, 120, 0)).toBe(-20); // One step at most.
+    expect(heightStep(80, 40, 0)).toBe(20);
+    expect(heightStep(80, 120, -30)).toBe(-5); // Only 5 cm of the 35 cm total left.
+    expect(heightStep(80, 120, -35)).toBe(0);
+    expect(heightStep(80, 40, -35)).toBe(20); // Coming back the other way is always allowed.
   });
 
   it('reads and sets the trim stored on the drone', async () => {
@@ -307,6 +368,28 @@ describe('DroneRunner', () => {
     await settle(runner.run([cmd.takeoff, cmd.forward(45), cmd.land]));
     // 45 cm / 0.9 = 50 cm sent.
     expect(drone.events).toContain('MOVE 0.50,0.00');
+  });
+
+  it('keeps a calibration it is given within the limits it learns within', async () => {
+    runner.dispose();
+    runner = new DroneRunner(drone, { overshootDeg: 40, moveRatio: 0.1, moveRatioAfterTurn: Number.NaN });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(runner.calibration).toEqual({
+      overshootDeg: CALIBRATION_LIMITS.overshootDeg.max,
+      moveRatio: CALIBRATION_LIMITS.moveRatio.min,
+      moveRatioAfterTurn: 1,
+    });
+  });
+
+  it('never sends a move longer than the real-flight limit, even after the distance ratio', async () => {
+    runner.dispose();
+    runner = new DroneRunner(drone, { ...runner.calibration, moveRatio: 0.8 });
+    await vi.advanceTimersByTimeAsync(300);
+    const log: string[] = [];
+    // 500 cm / 0.8 would be 625 cm.
+    await settle(runner.run([cmd.takeoff, cmd.forward(RUNNER_LIMITS.maxMoveCm), cmd.land], { onLog: (m) => log.push(m) }), 300_000);
+    expect(drone.events).toContain('MOVE 5.00,0.00');
+    expect(log).toContain('⚠ limited to 500 cm (would have sent 625 cm)');
   });
 
   it('does not learn from an unusual turn', async () => {

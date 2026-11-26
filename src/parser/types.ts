@@ -7,6 +7,7 @@
 
 export type MoveDirection = 'FORWARD' | 'BACKWARD' | 'LEFT' | 'RIGHT';
 export type TurnDirection = 'LEFT' | 'RIGHT';
+export type VerticalDirection = 'UP' | 'DOWN';
 
 interface CommandSource {
   /** Blockly block `id` attribute, or null when the block had none. */
@@ -20,6 +21,12 @@ export type DroneCommand =
   | ({
       readonly type: 'MOVE';
       readonly direction: MoveDirection;
+      readonly distanceCm: number;
+    } & CommandSource)
+  | ({
+      /** Straight up or down (throttle), without moving sideways or turning. */
+      readonly type: 'VERTICAL';
+      readonly direction: VerticalDirection;
       readonly distanceCm: number;
     } & CommandSource)
   | ({
@@ -93,8 +100,10 @@ export interface RawBlock {
   readonly disabled: boolean;
   readonly fields: ReadonlyMap<string, string>;
   readonly values: ReadonlyMap<string, RawValueInput>;
-  /** Names of `<statement>` inputs (loop/if bodies) — unsupported in Phase 1. */
+  /** Names of `<statement>` inputs (loop/if bodies), in file order. */
   readonly statements: readonly string[];
+  /** The blocks inside each `<statement>` input, by input name. */
+  readonly children: ReadonlyMap<string, readonly RawBlock[]>;
   /** Child element names we did not expect on a statement block. */
   readonly unexpectedChildren: readonly string[];
 }

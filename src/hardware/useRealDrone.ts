@@ -3,7 +3,8 @@ import type { DroneCommand } from '../parser/types';
 import { DroneRunner } from './DroneRunner';
 import type { RunOutcome } from './DroneRunner';
 import { SerialLink, isWebSerialSupported } from './SerialLink';
-import { loadCalibration, saveCalibration } from './calibrationStore';
+import { loadCalibration } from './calibrationStore';
+import { FLOOR_CALIBRATION, toRealFlight } from './floorCalibration';
 import type { DroneStatus } from './protocol';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
@@ -85,8 +86,10 @@ export function useRealDrone(): RealDroneController {
       setConnection('disconnected');
       return;
     }
-    // Start from what earlier flights (here or on the hardware test page) learned about the drone.
     const r = new DroneRunner(l, loadCalibration());
+    // Distances come from the tape-measured floor calibration, not the drone's own sensor.
+    r.learnDistance = false;
+    r.holdHeight = true;
     link.current = l;
     runner.current = r;
     r.onStatus((s) => {
@@ -112,13 +115,21 @@ export function useRealDrone(): RealDroneController {
   const fly = useCallback(async (commands: readonly DroneCommand[]) => {
     const r = runner.current;
     if (!r || r.isRunning) return;
+    // The student's blocks stay on screen; the drone flies their calibrated version.
+    const plan = toRealFlight(commands);
+    r.moveRatio = 1;
+    r.moveRatioAfterTurn = 1;
+    r.overshootDeg = FLOOR_CALIBRATION.turnAimShortDeg;
     setFlight({ phase: 'flying', commands, activeIndex: null, landing: false, warning: null });
-    const outcome = await r.run(commands, {
-      onStep: (activeIndex) => setFlight((f) => (f.phase === 'flying' ? { ...f, activeIndex } : f)),
+    const outcome = await r.run(plan.commands, {
+      onStep: (i) => setFlight((f) => (f.phase === 'flying' ? { ...f, activeIndex: plan.sourceIndex[i] ?? null } : f)),
       onWarning: (warning) => setFlight((f) => (f.phase === 'flying' ? { ...f, warning } : f)),
     });
-    saveCalibration(r.calibration);
-    setFlight({ phase: 'done', commands, outcome });
+    const shown =
+      outcome.status === 'FAILED' && outcome.commandIndex !== null
+        ? { ...outcome, commandIndex: plan.sourceIndex[outcome.commandIndex] ?? null }
+        : outcome;
+    setFlight({ phase: 'done', commands, outcome: shown });
   }, []);
 
   const land = useCallback(() => {

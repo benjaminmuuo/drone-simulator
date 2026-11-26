@@ -27,4 +27,14 @@ describe('calibration store', () => {
     window.localStorage.setItem('birds.droneCalibration.v1', JSON.stringify({ overshootDeg: 99, moveRatio: 0.9 }));
     expect(loadCalibration()).toEqual(DEFAULT_CALIBRATION);
   });
+
+  it('only loads values the runner could have learned', () => {
+    // A ratio of 0.5 would send twice the distance a block asks for.
+    window.localStorage.setItem('birds.droneCalibration.v1', JSON.stringify({ overshootDeg: 4, moveRatio: 0.5 }));
+    expect(loadCalibration()).toEqual(DEFAULT_CALIBRATION);
+    window.localStorage.setItem('birds.droneCalibration.v1', JSON.stringify({ overshootDeg: 12, moveRatio: 0.9 }));
+    expect(loadCalibration()).toEqual(DEFAULT_CALIBRATION);
+    window.localStorage.setItem('birds.droneCalibration.v1', JSON.stringify({ overshootDeg: 4, moveRatio: 0.9, moveRatioAfterTurn: 0.6 }));
+    expect(loadCalibration()).toEqual({ overshootDeg: 4, moveRatio: 0.9, moveRatioAfterTurn: 0.9 });
+  });
 });

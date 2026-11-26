@@ -16,7 +16,7 @@ import { useSimulation } from '../hooks/useSimulation';
 import type { PlaybackPhase } from '../hooks/useSimulation';
 import { COURSE_GROUPS, DEFAULT_MAZE, findMaze } from '../mazes';
 import { DEFAULT_FLIGHT_HEIGHT_CM, FLIGHT_HEIGHT_OPTIONS_CM, OBSTACLE_CLEARANCE_CM } from '../mazes/constants';
-import type { Point } from '../mazes/types';
+import type { TrailPoint } from '../animation/timeline';
 import { describeCommand } from '../parser/describeCommand';
 import { PARSER_LIMITS, parseRobolinkXml } from '../parser/RobolinkXmlParser';
 import type { ParseIssue } from '../parser/types';
@@ -60,7 +60,7 @@ const CAMERA_KEYS: Record<string, CameraNudge> = {
   '0': 'recenter',
 };
 const NO_CHECKPOINTS: ReadonlySet<string> = new Set();
-const NO_TRAIL: readonly Point[] = [];
+const NO_TRAIL: readonly TrailPoint[] = [];
 
 const describePoint = (p: SnappedPoint) => (p.label ? `${p.label} (${formatPoint(p.point)})` : formatPoint(p.point));
 
@@ -298,23 +298,20 @@ export function App() {
   const realFlight = drone.flight.phase === 'flying' ? drone.flight : null;
   const realActive = realFlight?.activeIndex ?? null;
   const realActiveCommand = realFlight && realActive !== null ? realFlight.commands[realActive] : undefined;
-  // Rehearse first: only a program that passes the simulation may fly for real.
-  const flyBlockers = !commands
-    ? ['Fix the problems in your program first.']
-    : result?.status !== 'SUCCESS'
-      ? ['This program fails in the simulator. Fix it until the simulation says “Mission complete”.']
-      : [];
+  // The simulator is optional: its objection is shown as a warning, and only a broken program can't fly.
+  const flyBlockers = commands ? [] : ['Fix the problems in your program first.'];
+  const simWarning = commands && result && result.status !== 'SUCCESS' ? (result.failure?.message ?? 'This program does not finish the course.') : null;
 
   const crashed = failureShown && failure.contactPoint !== undefined;
   const flightLabel = crashed
     ? 'Crashed'
-    : frame.pose.altitude <= 0
+    : frame.pose.altitudeCm <= 0
       ? 'Landed'
-      : frame.pose.altitude >= 1
-        ? 'Flying'
-        : activeCommand?.type === 'LAND'
-          ? 'Landing…'
-          : 'Taking off…';
+      : activeCommand?.type === 'LAND'
+        ? 'Landing…'
+        : activeCommand?.type === 'TAKEOFF'
+          ? 'Taking off…'
+          : 'Flying';
 
   let statusLabel = STATUS_LABELS[phase];
   let statusTone: 'idle' | 'live' | 'ok' | 'error' = phase === 'running' || phase === 'paused' ? 'live' : 'idle';
@@ -366,7 +363,7 @@ export function App() {
           <Icon name="info" />
           <span>
             Shows the <strong>expected</strong> flight. Real drones can drift with battery, sensors and air, so always fly
-            carefully. When the simulation passes, you can fly the real drone over USB.
+            carefully. Test your blocks in the simulator, or fly them straight on the real drone over USB.
           </span>
         </p>
       </header>
@@ -383,6 +380,7 @@ export function App() {
             warnings={parsed?.ok ? parsed.warnings : []}
             importFailure={importFailure}
             canDownload={program !== null}
+            appOnlyBlocks={commands?.some((c) => c.type === 'VERTICAL') ?? false}
             onFile={handleFile}
             onDownload={() => program && downloadXml(program.xml, program.fileName ?? 'drone-program.xml')}
             onNew={() => startFresh(STARTER_PROGRAM_XML)}
@@ -610,7 +608,7 @@ export function App() {
 
             {phase === 'finished' && result && <MissionFeedback result={result} onShowBlock={onShowBlock} />}
 
-            <RealDronePanel drone={drone} commands={commands} blockers={flyBlockers} onShowBlock={onShowBlock} />
+            <RealDronePanel drone={drone} commands={commands} blockers={flyBlockers} simWarning={simWarning} onShowBlock={onShowBlock} />
           </section>
           {realFlight ? (
             <FlightPlan commands={realFlight.commands} activeIndex={realActive} completedCount={realActive ?? 0} failedIndex={null} />

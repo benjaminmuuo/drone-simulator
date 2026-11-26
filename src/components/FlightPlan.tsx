@@ -16,8 +16,12 @@ const ICONS: Record<DroneCommand['type'], IconName> = {
   LAND: 'down',
   HOVER: 'clock',
   MOVE: 'arrow',
+  VERTICAL: 'chevron-up',
   TURN: 'rotate',
 };
+
+const iconFor = (command: DroneCommand): IconName =>
+  command.type === 'VERTICAL' && command.direction === 'DOWN' ? 'chevron-down' : ICONS[command.type];
 
 /** The program as the simulator understood it, step by step, with live progress. */
 export function FlightPlan({ commands, activeIndex, completedCount, failedIndex }: Props) {
@@ -52,7 +56,7 @@ export function FlightPlan({ commands, activeIndex, completedCount, failedIndex 
               >
                 <span className="plan__num">{index + 1}</span>
                 <span className="plan__icon">
-                  <Icon name={ICONS[command.type]} size={14} />
+                  <Icon name={iconFor(command)} size={14} />
                 </span>
                 <span className="program__label plan__label">{describeCommand(command)}</span>
                 <span className="plan__state" aria-hidden="true">

@@ -107,10 +107,10 @@ describe('XML upload and program preview', () => {
 
   it('shows unsupported blocks with their block id', async () => {
     render(<App />);
-    const xml = fixture.replace('type="hover"', 'type="controls_repeat_ext"');
+    const xml = fixture.replace('type="hover"', 'type="controls_whileUntil"');
     await upload(xmlFile(xml));
     const errors = await screen.findByRole('list', { name: 'Import errors' });
-    expect(errors).toHaveTextContent('"controls_repeat_ext" block is not supported');
+    expect(errors).toHaveTextContent('"controls_whileUntil" block is not supported');
     expect(errors).toHaveTextContent('wP^sB$g8ZY#|plweMs_[');
   });
 
@@ -230,11 +230,30 @@ describe('playback', () => {
     advance(20_000);
     expect(screen.getByRole('alert')).toHaveTextContent('Mission complete!');
     expect(screen.getByTestId('telemetry-status')).toHaveTextContent('Mission complete');
-    expect(screen.getByTestId('telemetry-x')).toHaveTextContent('200.0 cm');
-    expect(screen.getByTestId('telemetry-y')).toHaveTextContent('200.0 cm');
+    expect(screen.getByTestId('telemetry-x')).toHaveTextContent('180.0 cm');
+    expect(screen.getByTestId('telemetry-y')).toHaveTextContent('132.0 cm');
     expect(screen.getByTestId('telemetry-heading')).toHaveTextContent('90°');
     expect(screen.getByTestId('telemetry-flight')).toHaveTextContent('Landed');
     expect(programItems().every((li) => li.getAttribute('data-state') === 'done')).toBe(true);
+  });
+
+  it('demo 1 climbs and comes back down, with the height shown and an app-only note', async () => {
+    render(<App />);
+    chooseCourse('demo-throttle');
+    await upload(xmlFile(findMaze('demo-throttle')!.exampleXml!, 'demo.xml'));
+    await screen.findByText(/Program imported/);
+    expect(screen.getByTestId('app-only-blocks')).toHaveTextContent("Robolink Blockly can't open");
+    expect(screen.getByTestId('telemetry-height')).toHaveTextContent('0 cm');
+    useFakeFrames();
+    fireEvent.click(screen.getByRole('button', { name: /Run simulation/ }));
+    // Take off (1.2 s) + up 30 cm (1 s) = 2.2 simulated s, 4.4 s at 0.5×.
+    advance(200);
+    advance(4_300);
+    expect(screen.getByTestId('telemetry-height')).toHaveTextContent(/^1(09|10) cm$/);
+    expect(screen.getByTestId('telemetry-flight')).toHaveTextContent('Flying');
+    advance(20_000);
+    expect(screen.getByRole('alert')).toHaveTextContent('Mission complete!');
+    expect(screen.getByTestId('telemetry-height')).toHaveTextContent('0 cm');
   });
 
   it('pauses, resumes and resets', async () => {
@@ -256,8 +275,8 @@ describe('playback', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Reset/ }));
     expect(screen.getByTestId('telemetry-status')).toHaveTextContent('Ready');
-    expect(screen.getByTestId('telemetry-x')).toHaveTextContent('150.0 cm');
-    expect(screen.getByTestId('telemetry-y')).toHaveTextContent('250.0 cm');
+    expect(screen.getByTestId('telemetry-x')).toHaveTextContent('120.0 cm');
+    expect(screen.getByTestId('telemetry-y')).toHaveTextContent('176.0 cm');
     expect(screen.getByTestId('telemetry-flight')).toHaveTextContent('Landed');
     expect(programItems().every((li) => li.getAttribute('data-state') === 'pending')).toBe(true);
     expect(screen.getByRole('button', { name: /Run simulation/ })).toBeEnabled();
@@ -306,13 +325,15 @@ describe('without WebGL', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Mission complete!');
   });
 
-  it('groups the courses: Flight School, then the mazes, then free flight', () => {
+  it('groups the courses: Flight School, the mazes, free flight, the demos, the student moves', () => {
     render(<App />);
     const groups = screen.getByRole('combobox', { name: /Course/ }).querySelectorAll('optgroup');
     expect([...groups].map((g) => [g.label, g.querySelectorAll('option').length])).toEqual([
-      ['Flight School', 5],
+      ['Flight School', 6],
       ['Maze challenges', 2],
       ['Free flight', 1],
+      ['Flight words (instructor demo)', 6],
+      ['Student moves', 5],
     ]);
     expect(screen.getByRole('heading', { name: 'Lesson 1: First flight' })).toBeInTheDocument();
   });
@@ -320,6 +341,6 @@ describe('without WebGL', () => {
   it('can switch mazes', async () => {
     render(<App />);
     fireEvent.change(screen.getByRole('combobox', { name: /Course/ }), { target: { value: 'open-field' } });
-    await waitFor(() => expect(screen.getByTestId('telemetry-x')).toHaveTextContent('200.0 cm'));
+    await waitFor(() => expect(screen.getByTestId('telemetry-x')).toHaveTextContent('150.0 cm'));
   });
 });
